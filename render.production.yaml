@@ -97,6 +97,12 @@ services:
         sync: false
       - key: TURNSTILE_SECRET_KEY
         sync: false
+      # Private platform-control console at https://api.opsnestone.com/admin.
+      # Never put these values in GitHub, the desktop installer or the website.
+      - key: OPSNEST_ADMIN_EMAIL
+        sync: false
+      - key: OPSNEST_ADMIN_PASSWORD
+        sync: false
 
 databases:
   - name: opsnest-cloud-postgres

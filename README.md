@@ -42,6 +42,25 @@ Enter these only in the Render dashboard after deployment:
 - `RESEND_API_KEY` for e-mail delivery over HTTPS (required on Render Free)
 - `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`
 
+## Private platform control panel
+
+The product owner can review registrations, companies, package distribution,
+team-seat use, recent non-accounting activity and PayPal webhook metadata at:
+
+`https://api.opsnestone.com/admin`
+
+The panel is disabled by default. Enable it only in the Render Environment for
+`opsnest-cloud-api` with these private values:
+
+- `OPSNEST_ADMIN_EMAIL` - the product owner's private administrator e-mail;
+- `OPSNEST_ADMIN_PASSWORD` - a unique long password, not reused from e-mail,
+  PayPal, GitHub or the hosting provider.
+
+The sign-in cookie is HttpOnly, Secure in production and expires after 12
+hours. The panel intentionally cannot display customer invoices, PDFs,
+bookkeeping snapshots, passwords, tokens, payment credentials or PayPal
+webhook payloads.
+
 Render Free blocks outbound SMTP ports. Verify `opsnestone.com` in Resend, then set `RESEND_API_KEY` in the Render dashboard. OpsNest uses `support@opsnestone.com` as the sender and automatically prefers Resend when this key is configured.
 
 ## Local development

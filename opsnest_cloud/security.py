@@ -85,3 +85,34 @@ def verify_checkout_session(value: str) -> dict[str, Any] | None:
         return payload
     except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
         return None
+
+
+def sign_admin_session(email: str, *, expires_in_hours: int = 12) -> str:
+    """Create a short-lived, signed cookie for the private OpsNest control console."""
+    payload = {
+        "scope": "opsnest_admin",
+        "email": str(email or "").strip().lower(),
+        "expires_at": int((datetime.utcnow() + timedelta(hours=expires_in_hours)).timestamp()),
+    }
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    signature = hmac.new(settings.signing_secret.encode("utf-8"), raw, hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=") + "." + base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
+
+
+def verify_admin_session(value: str) -> dict[str, Any] | None:
+    """Validate an admin cookie without retaining a browser session server-side."""
+    try:
+        raw_part, signature_part = value.split(".", 1)
+        raw = base64.urlsafe_b64decode(raw_part + "=" * (-len(raw_part) % 4))
+        provided = base64.urlsafe_b64decode(signature_part + "=" * (-len(signature_part) % 4))
+        expected = hmac.new(settings.signing_secret.encode("utf-8"), raw, hashlib.sha256).digest()
+        if not hmac.compare_digest(provided, expected):
+            return None
+        payload = json.loads(raw.decode("utf-8"))
+        if payload.get("scope") != "opsnest_admin" or int(payload.get("expires_at") or 0) < int(datetime.utcnow().timestamp()):
+            return None
+        if not str(payload.get("email") or "").strip():
+            return None
+        return payload
+    except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
+        return None

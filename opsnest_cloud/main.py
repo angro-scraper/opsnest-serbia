@@ -14,12 +14,23 @@ from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .config import settings
+from .admin_console import (
+    ADMIN_COOKIE,
+    ADMIN_SESSION_HOURS,
+    admin_dashboard_html,
+    admin_login_html,
+    admin_session_email,
+    new_admin_session,
+    platform_overview,
+    require_admin,
+    verify_admin_credentials,
+)
 from .desktop_release import current_desktop_release
 from .database import (
     EmailChallenge,
@@ -151,6 +162,13 @@ class DiagnosticReport(BaseModel):
     operating_system: str = Field(default="", max_length=240)
     license_status: str = Field(default="", max_length=64)
     message: str = Field(default="", max_length=800)
+
+
+class AdminLogin(BaseModel):
+    """Private product-owner credentials supplied only through Render Environment."""
+
+    email: str = Field(min_length=5, max_length=320)
+    password: str = Field(min_length=1, max_length=512)
 
 
 def _validate_workspace_id(value: str) -> str:
@@ -357,6 +375,58 @@ def _workspace_dependency(
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "opsnest-cloud"}
+
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_console(request: Request) -> HTMLResponse:
+    """Private platform console. It remains disabled until Render configures it."""
+    if not settings.admin_enabled:
+        raise HTTPException(status_code=404, detail="Not found.")
+    operator_email = admin_session_email(request)
+    response = HTMLResponse(admin_dashboard_html(operator_email) if operator_email else admin_login_html())
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "same-origin"
+    return response
+
+
+@app.post("/admin/login")
+def admin_login(payload: AdminLogin) -> JSONResponse:
+    """Start a short-lived, signed, HttpOnly session for the product owner."""
+    if not settings.admin_enabled:
+        raise HTTPException(status_code=404, detail="Not found.")
+    if not verify_admin_credentials(payload.email, payload.password):
+        raise HTTPException(status_code=401, detail="Administrator e-mail or password is not correct.")
+    response = JSONResponse({"ok": True})
+    response.headers["Cache-Control"] = "no-store"
+    response.set_cookie(
+        key=ADMIN_COOKIE,
+        value=new_admin_session(settings.admin_email),
+        max_age=ADMIN_SESSION_HOURS * 60 * 60,
+        httponly=True,
+        secure=settings.is_production,
+        samesite="lax",
+        path="/admin",
+    )
+    return response
+
+
+@app.post("/admin/logout")
+def admin_logout(request: Request) -> JSONResponse:
+    """Clear the browser cookie. No customer session or data is touched."""
+    require_admin(request)
+    response = JSONResponse({"ok": True})
+    response.headers["Cache-Control"] = "no-store"
+    response.delete_cookie(ADMIN_COOKIE, path="/admin", httponly=True, secure=settings.is_production, samesite="lax")
+    return response
+
+
+@app.get("/admin/api/overview")
+def admin_overview(request: Request, db: Session = Depends(get_session)) -> JSONResponse:
+    """Return only privacy-safe product operations metadata to the control console."""
+    require_admin(request)
+    response = JSONResponse(platform_overview(db))
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.get("/v1/public/plans")

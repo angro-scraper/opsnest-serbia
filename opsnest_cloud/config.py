@@ -37,6 +37,8 @@ class Settings:
     desktop_installer_sha256: str
     turnstile_site_key: str
     turnstile_secret_key: str
+    admin_email: str
+    admin_password: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -78,6 +80,10 @@ class Settings:
             desktop_installer_sha256=_value("DESKTOP_INSTALLER_SHA256").lower(),
             turnstile_site_key=_value("TURNSTILE_SITE_KEY"),
             turnstile_secret_key=_value("TURNSTILE_SECRET_KEY"),
+            # The control console is disabled until both values are set only in
+            # Render. They are intentionally not part of the installer or repo.
+            admin_email=_value("OPSNEST_ADMIN_EMAIL").lower(),
+            admin_password=_value("OPSNEST_ADMIN_PASSWORD"),
         )
 
     @property
@@ -87,6 +93,11 @@ class Settings:
     @property
     def is_development(self) -> bool:
         return self.app_env == "development"
+
+    @property
+    def admin_enabled(self) -> bool:
+        """Keep the private control console unreachable until explicitly configured."""
+        return bool(self.admin_email and self.admin_password and self.signing_secret != "development-only-change-me")
 
     @property
     def paypal_api_base(self) -> str:
