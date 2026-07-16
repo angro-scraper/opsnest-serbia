@@ -1,0 +1,7 @@
+RewriteEngine On
+RewriteRule ^pricing/?$ pricing.html [L]
+RewriteRule ^getting-started/?$ getting-started.html [L]
+RewriteRule ^support/?$ support.html [L]
+RewriteRule ^privacy/?$ privacy.html [L]
+RewriteRule ^terms/?$ terms.html [L]
+RewriteRule ^cancellation/?$ cancellation.html [L]

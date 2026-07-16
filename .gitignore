@@ -9,6 +9,7 @@ build/
 dist/
 release/
 *.spec
+public_site/downloads/
 Data/
 Fakture/
 Prilozi/
