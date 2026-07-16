@@ -167,8 +167,11 @@ def request_email_code(
         if str(desktop_client or "").strip().lower() != "desktop":
             raise HTTPException(status_code=400, detail="Complete the bot protection check and try again.")
         _limit_desktop_activation(request.client.host if request.client else "")
-    if not settings.is_development and (not settings.smtp_from_email or not (settings.resend_api_key or settings.smtp_host)):
-        raise HTTPException(status_code=503, detail="Online activation is not configured yet.")
+    if not settings.is_development and not settings.resend_api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="E-mail activation is not ready yet. OpsNest support must configure secure e-mail delivery.",
+        )
     existing_email = db.scalar(select(Workspace).where(Workspace.owner_email == email))
     if existing_email and existing_email.id != workspace_id:
         raise HTTPException(status_code=409, detail="This e-mail is already linked to another workspace.")

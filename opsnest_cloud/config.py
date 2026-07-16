@@ -90,7 +90,8 @@ class Settings:
             return
         public_url = urlparse(self.public_url)
         database_is_postgres = self.database_url.startswith("postgresql+psycopg://")
-        email_delivery_configured = bool(self.resend_api_key) or bool(self.smtp_host and self.smtp_from_email)
+        # Render Free blocks SMTP egress, so a public launch must use Resend over HTTPS.
+        email_delivery_configured = bool(self.resend_api_key)
         required = {
             "DATABASE_URL": self.database_url if database_is_postgres else "",
             "APP_SIGNING_SECRET": self.signing_secret if self.signing_secret != "development-only-change-me" else "",
@@ -103,7 +104,7 @@ class Settings:
             "PAYPAL_PLAN_BUSINESS": self.paypal_plan_business,
             "PAYPAL_PLAN_PRO": self.paypal_plan_pro,
             "SMTP_FROM_EMAIL": self.smtp_from_email,
-            "RESEND_API_KEY_OR_SMTP_HOST": "configured" if email_delivery_configured else "",
+            "RESEND_API_KEY": "configured" if email_delivery_configured else "",
             "TURNSTILE_SITE_KEY": self.turnstile_site_key,
             "TURNSTILE_SECRET_KEY": self.turnstile_secret_key,
         }

@@ -31,7 +31,7 @@ The API uses `api.opsnestone.com`. Keep `opsnestone.com` available for the publi
 4. Test the complete registration and each subscription plan with `PAYPAL_MODE=sandbox` while `APP_ENV=preview`.
 5. Create the three live PayPal plans, add their live IDs and webhook ID, switch `PAYPAL_MODE` to `live`, then set `APP_ENV` to `production`.
 
-Production startup refuses to run without Postgres, HTTPS, e-mail verification, Turnstile, all three PayPal plan IDs, and live PayPal mode. This prevents a half-configured public launch.
+Production startup refuses to run without Postgres, HTTPS, Resend e-mail verification, Turnstile, all three PayPal plan IDs, and live PayPal mode. This prevents a half-configured public launch.
 
 ## Required Render secrets
 
@@ -39,8 +39,7 @@ Enter these only in the Render dashboard after deployment:
 
 - `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID`
 - `PAYPAL_PLAN_STARTER`, `PAYPAL_PLAN_BUSINESS`, `PAYPAL_PLAN_PRO`
-- `RESEND_API_KEY` for e-mail delivery over HTTPS (recommended for Render Free)
-- `SMTP_USERNAME`, `SMTP_PASSWORD` only if the service is upgraded to a paid Render instance
+- `RESEND_API_KEY` for e-mail delivery over HTTPS (required on Render Free)
 - `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`
 
 Render Free blocks outbound SMTP ports. Verify `opsnestone.com` in Resend, then set `RESEND_API_KEY` in the Render dashboard. OpsNest uses `support@opsnestone.com` as the sender and automatically prefers Resend when this key is configured.
