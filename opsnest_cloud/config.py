@@ -34,6 +34,7 @@ class Settings:
     support_email: str
     desktop_latest_version: str
     desktop_installer_url: str
+    desktop_installer_sha256: str
     turnstile_site_key: str
     turnstile_secret_key: str
 
@@ -74,6 +75,7 @@ class Settings:
             support_email=_value("SUPPORT_EMAIL", _value("SMTP_FROM_EMAIL")),
             desktop_latest_version=_value("DESKTOP_LATEST_VERSION", "0.0.0"),
             desktop_installer_url=_value("DESKTOP_INSTALLER_URL"),
+            desktop_installer_sha256=_value("DESKTOP_INSTALLER_SHA256").lower(),
             turnstile_site_key=_value("TURNSTILE_SITE_KEY"),
             turnstile_secret_key=_value("TURNSTILE_SECRET_KEY"),
         )
