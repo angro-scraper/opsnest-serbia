@@ -82,6 +82,39 @@ def send_verification_email(email: str, code: str, company_name: str) -> None:
         raise HTTPException(status_code=502, detail="Verification e-mail could not be sent.") from exc
 
 
+def send_team_invitation(*, email: str, company_name: str, role: str, code: str) -> None:
+    """Send a minimal invite without including a password, token, or accounting data."""
+    if not settings.smtp_from_email:
+        raise HTTPException(status_code=503, detail="Team invitation e-mail is not configured yet.")
+    subject = f"You are invited to {company_name} on OpsNest"
+    body = (
+        f"You have been invited to the OpsNest workspace for: {company_name}\n"
+        f"Role: {role}\n\n"
+        f"Your one-time team invitation code is: {code}\n"
+        "Open OpsNest on your Windows computer, choose Team sign in, and enter your e-mail and this code. "
+        "You will then choose your own password. The code expires in 48 hours.\n\n"
+        "If you were not expecting this invitation, you can ignore this message."
+    )
+    if settings.resend_api_key:
+        _send_resend_email(email, subject, body)
+        return
+    if not settings.smtp_host:
+        raise HTTPException(status_code=503, detail="Team invitation e-mail is not configured yet.")
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
+    message["To"] = email
+    message.set_content(body)
+    try:
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=20) as client:
+            client.starttls()
+            if settings.smtp_username:
+                client.login(settings.smtp_username, settings.smtp_password)
+            client.send_message(message)
+    except (OSError, smtplib.SMTPException) as exc:
+        raise HTTPException(status_code=502, detail="Team invitation e-mail could not be sent.") from exc
+
+
 def send_support_diagnostic(*, workspace: Workspace, diagnostic: dict[str, Any]) -> None:
     """Deliver a deliberately small, non-accounting support report to OpsNest."""
     if not settings.support_email or not settings.smtp_from_email:

@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Iterator
 
-from sqlalchemy import DateTime, Integer, String, Text, create_engine
+from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from .config import settings
@@ -62,6 +62,86 @@ class PayPalWebhookEvent(Base):
     subscription_id: Mapped[str] = mapped_column(String(128), default="", index=True)
     payload_json: Mapped[str] = mapped_column(Text, default="{}")
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow)
+
+
+class WorkspaceMember(Base):
+    """A named person who can sign in to one company workspace."""
+
+    __tablename__ = "workspace_members"
+    __table_args__ = (UniqueConstraint("workspace_id", "email", name="uq_workspace_member_email"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(36), index=True)
+    email: Mapped[str] = mapped_column(String(320), index=True)
+    display_name: Mapped[str] = mapped_column(String(160), default="")
+    role: Mapped[str] = mapped_column(String(32), default="operator", index=True)
+    status: Mapped[str] = mapped_column(String(32), default="invited", index=True)
+    password_hash: Mapped[str] = mapped_column(Text, default="")
+    invited_by_member_id: Mapped[str] = mapped_column(String(36), default="")
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class TeamInvitation(Base):
+    """Single-use e-mail invitation. Only its hash is retained in the database."""
+
+    __tablename__ = "team_invitations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(36), index=True)
+    email: Mapped[str] = mapped_column(String(320), index=True)
+    display_name: Mapped[str] = mapped_column(String(160), default="")
+    role: Mapped[str] = mapped_column(String(32), default="operator")
+    code_hash: Mapped[str] = mapped_column(String(64))
+    invited_by_member_id: Mapped[str] = mapped_column(String(36), default="")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=False))
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow)
+
+
+class MemberSession(Base):
+    """Revocable device session, separate from the existing workspace license token."""
+
+    __tablename__ = "member_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(36), index=True)
+    member_id: Mapped[str] = mapped_column(String(36), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    device_name: Mapped[str] = mapped_column(String(160), default="OpsNest Desktop")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow)
+
+
+class WorkspaceAuditEvent(Base):
+    """Minimal immutable audit log. It stores actions, never accounting payloads or passwords."""
+
+    __tablename__ = "workspace_audit_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(36), index=True)
+    actor_member_id: Mapped[str] = mapped_column(String(36), default="", index=True)
+    action: Mapped[str] = mapped_column(String(80), index=True)
+    entity_type: Mapped[str] = mapped_column(String(80), default="")
+    entity_id: Mapped[str] = mapped_column(String(80), default="")
+    details_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow, index=True)
+
+
+class WorkspaceSyncSnapshot(Base):
+    """Versioned encrypted-in-transit workspace data supplied by the desktop app."""
+
+    __tablename__ = "workspace_sync_snapshots"
+
+    workspace_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, default=0)
+    snapshot_b64: Mapped[str] = mapped_column(Text, default="")
+    sha256: Mapped[str] = mapped_column(String(64), default="")
+    updated_by_member_id: Mapped[str] = mapped_column(String(36), default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 def create_schema() -> None:

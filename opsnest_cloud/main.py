@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import uuid
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from threading import Lock
 from html import escape
@@ -17,19 +20,40 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .database import EmailChallenge, PayPalWebhookEvent, Workspace, create_schema, get_session
-from .security import new_client_token, new_email_code, secret_hash, sign_checkout_session, verify_checkout_session
+from .database import (
+    EmailChallenge,
+    MemberSession,
+    PayPalWebhookEvent,
+    TeamInvitation,
+    Workspace,
+    WorkspaceAuditEvent,
+    WorkspaceMember,
+    WorkspaceSyncSnapshot,
+    create_schema,
+    get_session,
+)
+from .security import (
+    new_client_token,
+    new_email_code,
+    new_member_session_token,
+    password_hash,
+    secret_hash,
+    sign_checkout_session,
+    verify_checkout_session,
+    verify_password,
+)
 from .services import (
     effective_license,
     get_paypal_subscription,
     paypal_access_token,
+    send_team_invitation,
     send_support_diagnostic,
     send_verification_email,
     start_trial,
     verify_paypal_webhook,
     verify_turnstile_token,
 )
-from opsnest_plans import PLAN_CATALOG, TRIAL_DAYS, public_plan_catalog
+from opsnest_plans import PLAN_CATALOG, TRIAL_DAYS, plan_details, public_plan_catalog
 
 
 PLAN_PRICES = {code: f"{data['price_eur']} EUR / month" for code, data in PLAN_CATALOG.items()}
@@ -48,8 +72,20 @@ app.add_middleware(
     allow_origins=list(settings.allowed_origins) or [settings.public_url],
     allow_credentials=False,
     allow_methods=["GET", "POST"],
-    allow_headers=["Authorization", "Content-Type", "X-OpsNest-Workspace", "X-OpsNest-Client"],
+    allow_headers=["Authorization", "Content-Type", "X-OpsNest-Workspace", "X-OpsNest-Client", "X-OpsNest-Member"],
 )
+
+
+TEAM_ROLES = {"owner", "administrator", "project_manager", "accountant", "operator"}
+TEAM_ROLE_LABELS = {
+    "owner": "Owner / Administrator",
+    "administrator": "Administrator",
+    "project_manager": "Project manager",
+    "accountant": "Accountant",
+    "operator": "Operator",
+}
+TEAM_SESSION_DAYS = 30
+TEAM_INVITATION_HOURS = 48
 
 
 class RequestEmailCode(BaseModel):
@@ -63,6 +99,38 @@ class ConfirmEmailCode(BaseModel):
     workspace_id: str = Field(min_length=36, max_length=36)
     email: str = Field(min_length=5, max_length=320)
     code: str = Field(min_length=6, max_length=6)
+
+
+class OwnerAccountSetup(BaseModel):
+    display_name: str = Field(default="", max_length=160)
+    password: str = Field(min_length=10, max_length=256)
+    device_name: str = Field(default="OpsNest Desktop", max_length=160)
+
+
+class TeamInvitationRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=320)
+    display_name: str = Field(default="", max_length=160)
+    role: str = Field(default="operator", max_length=32)
+
+
+class AcceptTeamInvitation(BaseModel):
+    email: str = Field(min_length=5, max_length=320)
+    code: str = Field(min_length=6, max_length=6)
+    password: str = Field(min_length=10, max_length=256)
+    device_name: str = Field(default="OpsNest Desktop", max_length=160)
+
+
+class TeamLogin(BaseModel):
+    workspace_id: str = Field(min_length=36, max_length=36)
+    email: str = Field(min_length=5, max_length=320)
+    password: str = Field(min_length=10, max_length=256)
+    device_name: str = Field(default="OpsNest Desktop", max_length=160)
+
+
+class UploadSyncSnapshot(BaseModel):
+    expected_revision: int = Field(ge=0)
+    snapshot_b64: str = Field(min_length=1, max_length=35_000_000)
+    sha256: str = Field(min_length=64, max_length=64)
 
 
 _desktop_activation_attempts: dict[str, deque[datetime]] = defaultdict(deque)
@@ -95,6 +163,155 @@ def _normalize_email(value: str) -> str:
     if "@" not in email or email.startswith("@") or email.endswith("@"):
         raise HTTPException(status_code=422, detail="Enter a valid e-mail address.")
     return email
+
+
+def _normalize_team_role(value: str) -> str:
+    role = str(value or "").strip().lower()
+    if role not in TEAM_ROLES:
+        raise HTTPException(status_code=422, detail="Unknown team role.")
+    return role
+
+
+def _serialize_member(member: WorkspaceMember) -> dict[str, Any]:
+    return {
+        "id": member.id,
+        "email": member.email,
+        "display_name": member.display_name,
+        "role": member.role,
+        "role_label": TEAM_ROLE_LABELS.get(member.role, member.role),
+        "status": member.status,
+        "last_login_at": member.last_login_at.isoformat() if member.last_login_at else "",
+        "created_at": member.created_at.isoformat() if member.created_at else "",
+    }
+
+
+def _record_audit(
+    db: Session,
+    *,
+    workspace_id: str,
+    action: str,
+    actor_member_id: str = "",
+    entity_type: str = "",
+    entity_id: str = "",
+    details: dict[str, Any] | None = None,
+) -> None:
+    """Record only operational metadata; billing credentials and accounting data stay out."""
+    db.add(
+        WorkspaceAuditEvent(
+            id=str(uuid.uuid4()),
+            workspace_id=workspace_id,
+            actor_member_id=actor_member_id,
+            action=action,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            details_json=json.dumps(details or {}, ensure_ascii=False, sort_keys=True),
+        )
+    )
+
+
+def _ensure_owner_member(db: Session, workspace: Workspace) -> WorkspaceMember:
+    owner_email = _normalize_email(workspace.owner_email)
+    member = db.scalar(
+        select(WorkspaceMember).where(
+            WorkspaceMember.workspace_id == workspace.id,
+            WorkspaceMember.email == owner_email,
+        )
+    )
+    if member is None:
+        member = WorkspaceMember(
+            id=str(uuid.uuid4()),
+            workspace_id=workspace.id,
+            email=owner_email,
+            display_name=workspace.company_name,
+            role="owner",
+            status="active",
+        )
+        db.add(member)
+        db.flush()
+    elif member.role != "owner":
+        member.role = "owner"
+        member.status = "active"
+    return member
+
+
+def _team_seat_limit(workspace: Workspace) -> int:
+    license_data = effective_license(workspace)
+    return int(plan_details(license_data["effective_plan_code"])["seats"])
+
+
+def _team_seats_used(db: Session, workspace_id: str) -> int:
+    active_states = {"active", "invited"}
+    members = db.scalars(select(WorkspaceMember).where(WorkspaceMember.workspace_id == workspace_id)).all()
+    return sum(1 for member in members if member.status in active_states)
+
+
+def _new_member_session(db: Session, member: WorkspaceMember, device_name: str) -> dict[str, str]:
+    token = new_member_session_token()
+    now = datetime.utcnow()
+    session = MemberSession(
+        id=str(uuid.uuid4()),
+        workspace_id=member.workspace_id,
+        member_id=member.id,
+        token_hash=secret_hash(token),
+        device_name=str(device_name or "OpsNest Desktop").strip()[:160] or "OpsNest Desktop",
+        expires_at=now + timedelta(days=TEAM_SESSION_DAYS),
+        last_seen_at=now,
+    )
+    member.last_login_at = now
+    db.add(session)
+    return {"member_id": member.id, "member_token": token, "member_role": member.role}
+
+
+@dataclass(frozen=True)
+class MemberContext:
+    workspace: Workspace
+    member: WorkspaceMember
+    session: MemberSession
+
+
+def _member_dependency(
+    db: Session = Depends(get_session),
+    workspace_id: Annotated[str, Header(alias="X-OpsNest-Workspace")] = "",
+    team_member_id: Annotated[str, Header(alias="X-OpsNest-Member")] = "",
+    authorization: Annotated[str, Header(alias="Authorization")] = "",
+) -> MemberContext:
+    normalized_workspace_id = _validate_workspace_id(workspace_id)
+    token = authorization.removeprefix("Bearer ").strip() if authorization else ""
+    member = db.get(WorkspaceMember, str(team_member_id or "").strip())
+    session = db.scalar(
+        select(MemberSession).where(
+            MemberSession.member_id == str(team_member_id or "").strip(),
+            MemberSession.workspace_id == normalized_workspace_id,
+            MemberSession.token_hash == secret_hash(token),
+            MemberSession.revoked_at.is_(None),
+        )
+    )
+    workspace = db.get(Workspace, normalized_workspace_id)
+    if (
+        not workspace
+        or not member
+        or not session
+        or member.workspace_id != normalized_workspace_id
+        or member.status != "active"
+        or session.expires_at <= datetime.utcnow()
+    ):
+        raise HTTPException(status_code=401, detail="Invalid or expired team session.")
+    session.last_seen_at = datetime.utcnow()
+    db.commit()
+    return MemberContext(workspace=workspace, member=member, session=session)
+
+
+def _require_team_role(context: MemberContext, *allowed_roles: str) -> MemberContext:
+    if context.member.role not in set(allowed_roles):
+        raise HTTPException(status_code=403, detail="This team role is not allowed to perform that action.")
+    return context
+
+
+def _require_team_sync(context: MemberContext) -> None:
+    license_data = effective_license(context.workspace)
+    features = set(plan_details(license_data["effective_plan_code"]).get("features") or set())
+    if "team_users" not in features:
+        raise HTTPException(status_code=403, detail="Shared team synchronization requires a Business or Pro package.")
 
 
 def _limit_desktop_activation(remote_ip: str) -> None:
@@ -264,6 +481,15 @@ def confirm_email_code(payload: ConfirmEmailCode, db: Session = Depends(get_sess
     token = new_client_token()
     workspace.client_token_hash = secret_hash(token)
     workspace.last_verified_at = datetime.utcnow()
+    owner = _ensure_owner_member(db, workspace)
+    _record_audit(
+        db,
+        workspace_id=workspace.id,
+        actor_member_id=owner.id,
+        action="workspace.email_verified",
+        entity_type="workspace",
+        entity_id=workspace.id,
+    )
     db.commit()
     return {"workspace_token": token, "license": effective_license(workspace)}
 
@@ -271,6 +497,368 @@ def confirm_email_code(payload: ConfirmEmailCode, db: Session = Depends(get_sess
 @app.get("/v1/license")
 def license_status(workspace: Workspace = Depends(_workspace_dependency)) -> dict[str, Any]:
     return effective_license(workspace)
+
+
+@app.post("/v1/team/owner-account")
+def setup_owner_account(
+    payload: OwnerAccountSetup,
+    workspace: Workspace = Depends(_workspace_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Create the owner's central sign-in without changing the legacy license token."""
+    owner = _ensure_owner_member(db, workspace)
+    try:
+        owner.password_hash = password_hash(payload.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    owner.display_name = payload.display_name.strip() or owner.display_name or workspace.company_name
+    owner.status = "active"
+    _record_audit(
+        db,
+        workspace_id=workspace.id,
+        actor_member_id=owner.id,
+        action="team.owner_account_configured",
+        entity_type="member",
+        entity_id=owner.id,
+    )
+    response = _new_member_session(db, owner, payload.device_name)
+    db.commit()
+    return {"ok": True, "member": _serialize_member(owner), **response}
+
+
+@app.get("/v1/team/members")
+def list_team_members(
+    context: MemberContext = Depends(_member_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Owners and administrators can view the centrally stored team roster."""
+    _require_team_role(context, "owner", "administrator")
+    members = db.scalars(
+        select(WorkspaceMember)
+        .where(WorkspaceMember.workspace_id == context.workspace.id)
+        .order_by(WorkspaceMember.created_at.asc())
+    ).all()
+    seat_limit = _team_seat_limit(context.workspace)
+    db.commit()
+    return {
+        "members": [_serialize_member(member) for member in members],
+        "seat_limit": seat_limit,
+        "seats_used": _team_seats_used(db, context.workspace.id),
+        "can_manage": True,
+    }
+
+
+@app.post("/v1/team/invitations")
+def invite_team_member(
+    payload: TeamInvitationRequest,
+    context: MemberContext = Depends(_member_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Invite a person into one workspace, enforcing the package seat limit."""
+    _require_team_role(context, "owner", "administrator")
+    workspace = context.workspace
+    email = _normalize_email(payload.email)
+    role = _normalize_team_role(payload.role)
+    if role == "owner":
+        raise HTTPException(status_code=422, detail="Only the original workspace owner can have the Owner role.")
+    if email == workspace.owner_email.lower():
+        raise HTTPException(status_code=409, detail="This e-mail already belongs to the workspace owner.")
+    existing = db.scalar(
+        select(WorkspaceMember).where(
+            WorkspaceMember.workspace_id == workspace.id,
+            WorkspaceMember.email == email,
+        )
+    )
+    if existing and existing.status == "active":
+        raise HTTPException(status_code=409, detail="This person is already an active team member.")
+    pending = db.scalar(
+        select(TeamInvitation)
+        .where(
+            TeamInvitation.workspace_id == workspace.id,
+            TeamInvitation.email == email,
+            TeamInvitation.accepted_at.is_(None),
+            TeamInvitation.expires_at > datetime.utcnow(),
+        )
+        .order_by(TeamInvitation.created_at.desc())
+    )
+    if not existing and not pending and _team_seats_used(db, workspace.id) >= _team_seat_limit(workspace):
+        raise HTTPException(status_code=409, detail="All team seats in this package are already used. Upgrade the package to invite another person.")
+    code = new_email_code()
+    invitation = TeamInvitation(
+        id=str(uuid.uuid4()),
+        workspace_id=workspace.id,
+        email=email,
+        display_name=payload.display_name.strip(),
+        role=role,
+        code_hash=secret_hash(code),
+        invited_by_member_id=context.member.id,
+        expires_at=datetime.utcnow() + timedelta(hours=TEAM_INVITATION_HOURS),
+    )
+    if existing:
+        existing.display_name = invitation.display_name or existing.display_name
+        existing.role = role
+        existing.status = "invited"
+    else:
+        db.add(
+            WorkspaceMember(
+                id=str(uuid.uuid4()),
+                workspace_id=workspace.id,
+                email=email,
+                display_name=invitation.display_name,
+                role=role,
+                status="invited",
+                invited_by_member_id=context.member.id,
+            )
+        )
+    db.add(invitation)
+    try:
+        send_team_invitation(
+            email=email,
+            company_name=workspace.company_name,
+            role=TEAM_ROLE_LABELS[role],
+            code=code,
+        )
+    except HTTPException:
+        db.rollback()
+        raise
+    _record_audit(
+        db,
+        workspace_id=workspace.id,
+        actor_member_id=context.member.id,
+        action="team.invitation_sent",
+        entity_type="invitation",
+        entity_id=invitation.id,
+        details={"email": email, "role": role},
+    )
+    db.commit()
+    return {"ok": True, "expires_at": invitation.expires_at.isoformat(), "role": role}
+
+
+@app.post("/v1/team/invitations/accept")
+def accept_team_invitation(payload: AcceptTeamInvitation, db: Session = Depends(get_session)) -> dict[str, Any]:
+    email = _normalize_email(payload.email)
+    invitations = db.scalars(
+        select(TeamInvitation)
+        .where(
+            TeamInvitation.email == email,
+            TeamInvitation.accepted_at.is_(None),
+            TeamInvitation.expires_at > datetime.utcnow(),
+        )
+        .order_by(TeamInvitation.created_at.desc())
+    ).all()
+    invitation = next((item for item in invitations if secret_hash(payload.code) == item.code_hash), None)
+    if invitation is None:
+        raise HTTPException(status_code=400, detail="The invitation code is not valid or has expired.")
+    workspace = db.get(Workspace, invitation.workspace_id)
+    member = db.scalar(
+        select(WorkspaceMember).where(
+            WorkspaceMember.workspace_id == invitation.workspace_id,
+            WorkspaceMember.email == email,
+        )
+    )
+    if not workspace or not member:
+        raise HTTPException(status_code=404, detail="The workspace invitation is no longer available.")
+    try:
+        member.password_hash = password_hash(payload.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    member.display_name = invitation.display_name or member.display_name or email.split("@", 1)[0]
+    member.role = invitation.role
+    member.status = "active"
+    invitation.accepted_at = datetime.utcnow()
+    _record_audit(
+        db,
+        workspace_id=workspace.id,
+        actor_member_id=member.id,
+        action="team.invitation_accepted",
+        entity_type="member",
+        entity_id=member.id,
+        details={"role": member.role},
+    )
+    response = _new_member_session(db, member, payload.device_name)
+    db.commit()
+    return {
+        "ok": True,
+        "workspace_id": workspace.id,
+        "company_name": workspace.company_name,
+        "member": _serialize_member(member),
+        **response,
+    }
+
+
+@app.post("/v1/team/members/{member_id}/revoke")
+def revoke_team_member(
+    member_id: str,
+    context: MemberContext = Depends(_member_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, bool]:
+    """Owner or administrator action; access is revoked but the audit remains."""
+    _require_team_role(context, "owner", "administrator")
+    workspace = context.workspace
+    member = db.get(WorkspaceMember, member_id)
+    if not member or member.workspace_id != workspace.id:
+        raise HTTPException(status_code=404, detail="Team member was not found.")
+    if member.id == context.member.id or member.role == "owner":
+        raise HTTPException(status_code=422, detail="The workspace owner cannot be removed.")
+    member.status = "revoked"
+    sessions = db.scalars(
+        select(MemberSession).where(
+            MemberSession.workspace_id == workspace.id,
+            MemberSession.member_id == member.id,
+            MemberSession.revoked_at.is_(None),
+        )
+    ).all()
+    for session in sessions:
+        session.revoked_at = datetime.utcnow()
+    _record_audit(
+        db,
+        workspace_id=workspace.id,
+        actor_member_id=context.member.id,
+        action="team.member_revoked",
+        entity_type="member",
+        entity_id=member.id,
+        details={"email": member.email},
+    )
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/v1/team/login")
+def team_login(payload: TeamLogin, db: Session = Depends(get_session)) -> dict[str, Any]:
+    workspace_id = _validate_workspace_id(payload.workspace_id)
+    email = _normalize_email(payload.email)
+    member = db.scalar(
+        select(WorkspaceMember).where(
+            WorkspaceMember.workspace_id == workspace_id,
+            WorkspaceMember.email == email,
+        )
+    )
+    workspace = db.get(Workspace, workspace_id)
+    if not workspace or not member or member.status != "active" or not verify_password(payload.password, member.password_hash):
+        raise HTTPException(status_code=401, detail="E-mail or password is not correct.")
+    _record_audit(
+        db,
+        workspace_id=workspace.id,
+        actor_member_id=member.id,
+        action="team.member_logged_in",
+        entity_type="member",
+        entity_id=member.id,
+    )
+    response = _new_member_session(db, member, payload.device_name)
+    db.commit()
+    return {
+        "ok": True,
+        "workspace_id": workspace.id,
+        "company_name": workspace.company_name,
+        "member": _serialize_member(member),
+        **response,
+    }
+
+
+@app.get("/v1/team/me")
+def team_me(context: MemberContext = Depends(_member_dependency)) -> dict[str, Any]:
+    return {
+        "workspace_id": context.workspace.id,
+        "company_name": context.workspace.company_name,
+        "member": _serialize_member(context.member),
+        "permissions": {
+            "manage_billing": context.member.role == "owner",
+            "manage_team": context.member.role in {"owner", "administrator"},
+            "manage_projects": context.member.role in {"owner", "administrator", "project_manager"},
+            "manage_accounting": context.member.role in {"owner", "administrator", "project_manager", "accountant"},
+            "delete_documents": context.member.role in {"owner", "administrator", "project_manager", "accountant"},
+        },
+    }
+
+
+@app.get("/v1/team/sync")
+def download_team_snapshot(
+    context: MemberContext = Depends(_member_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Return the current full workspace revision only to an authenticated team member."""
+    _require_team_sync(context)
+    snapshot = db.get(WorkspaceSyncSnapshot, context.workspace.id)
+    if snapshot is None:
+        return {"revision": 0, "sha256": "", "snapshot_b64": "", "updated_at": ""}
+    return {
+        "revision": snapshot.revision,
+        "sha256": snapshot.sha256,
+        "snapshot_b64": snapshot.snapshot_b64,
+        "updated_at": snapshot.updated_at.isoformat() if snapshot.updated_at else "",
+    }
+
+
+@app.post("/v1/team/sync")
+def upload_team_snapshot(
+    payload: UploadSyncSnapshot,
+    context: MemberContext = Depends(_member_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Compare-and-swap write prevents one computer silently overwriting another."""
+    _require_team_sync(context)
+    try:
+        raw_snapshot = base64.b64decode(payload.snapshot_b64.encode("ascii"), validate=True)
+    except (ValueError, UnicodeEncodeError) as exc:
+        raise HTTPException(status_code=422, detail="The team snapshot is not valid base64 data.") from exc
+    if len(raw_snapshot) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="The synchronized database is larger than the 25 MB team limit.")
+    if hashlib.sha256(raw_snapshot).hexdigest() != payload.sha256.lower():
+        raise HTTPException(status_code=422, detail="The team snapshot checksum does not match.")
+    snapshot = db.get(WorkspaceSyncSnapshot, context.workspace.id)
+    current_revision = int(snapshot.revision) if snapshot else 0
+    if payload.expected_revision != current_revision:
+        raise HTTPException(
+            status_code=409,
+            detail="A newer workspace revision exists. Download the latest team data before uploading your changes.",
+        )
+    if snapshot is None:
+        snapshot = WorkspaceSyncSnapshot(workspace_id=context.workspace.id)
+        db.add(snapshot)
+    snapshot.revision = current_revision + 1
+    snapshot.snapshot_b64 = payload.snapshot_b64
+    snapshot.sha256 = payload.sha256.lower()
+    snapshot.updated_by_member_id = context.member.id
+    snapshot.updated_at = datetime.utcnow()
+    _record_audit(
+        db,
+        workspace_id=context.workspace.id,
+        actor_member_id=context.member.id,
+        action="team.sync_uploaded",
+        entity_type="workspace_sync",
+        entity_id=str(snapshot.revision),
+        details={"revision": snapshot.revision, "sha256": snapshot.sha256},
+    )
+    db.commit()
+    return {"ok": True, "revision": snapshot.revision, "sha256": snapshot.sha256}
+
+
+@app.get("/v1/team/audit")
+def team_audit(
+    context: MemberContext = Depends(_member_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Administrator operational audit; no invoices, PDF bodies, or passwords are returned."""
+    _require_team_role(context, "owner", "administrator")
+    events = db.scalars(
+        select(WorkspaceAuditEvent)
+        .where(WorkspaceAuditEvent.workspace_id == context.workspace.id)
+        .order_by(WorkspaceAuditEvent.created_at.desc())
+        .limit(100)
+    ).all()
+    return {
+        "events": [
+            {
+                "at": event.created_at.isoformat(),
+                "action": event.action,
+                "actor_member_id": event.actor_member_id,
+                "entity_type": event.entity_type,
+                "entity_id": event.entity_id,
+                "details": json.loads(event.details_json or "{}"),
+            }
+            for event in events
+        ]
+    }
 
 
 @app.get("/v1/billing/summary")
