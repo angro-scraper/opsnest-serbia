@@ -50,6 +50,7 @@ from .services import (
     send_support_diagnostic,
     send_verification_email,
     start_trial,
+    verify_paypal_plan_ids,
     verify_paypal_webhook,
     verify_turnstile_token,
 )
@@ -885,18 +886,22 @@ def billing_summary(workspace: Workspace = Depends(_workspace_dependency)) -> di
 @app.get("/v1/billing/readiness")
 def billing_readiness(workspace: Workspace = Depends(_workspace_dependency)) -> dict[str, Any]:
     """Expose only safe capability flags to an authenticated desktop workspace."""
-    plan_ready = {plan: bool(plan_id) for plan, plan_id in settings.paypal_plan_ids.items()}
+    plan_configured = {plan: bool(plan_id) for plan, plan_id in settings.paypal_plan_ids.items()}
     configured = bool(
         settings.paypal_client_id
         and settings.paypal_client_secret
         and settings.paypal_webhook_id
-        and all(plan_ready.values())
+        and all(plan_configured.values())
     )
     credentials_valid = False
+    plan_ready = {plan: False for plan in settings.paypal_plan_ids}
     if configured:
         try:
+            # The plan lookup is a read-only PayPal Live API call. It proves the
+            # exact configured plan IDs before any customer checkout is opened.
             paypal_access_token()
             credentials_valid = True
+            plan_ready = verify_paypal_plan_ids()
         except HTTPException:
             # Do not expose provider details or credentials to a desktop client.
             credentials_valid = False
@@ -905,7 +910,7 @@ def billing_readiness(workspace: Workspace = Depends(_workspace_dependency)) -> 
         "mode": settings.paypal_mode,
         "configured": configured,
         "credentials_valid": credentials_valid,
-        "ready": configured and credentials_valid,
+        "ready": settings.paypal_mode == "live" and configured and credentials_valid and all(plan_ready.values()),
         "plans": plan_ready,
     }
 

@@ -267,6 +267,25 @@ def get_paypal_subscription(subscription_id: str) -> dict[str, Any]:
     )
 
 
+def verify_paypal_plan_ids() -> dict[str, bool]:
+    """Confirm configured billing plans exist and are active without charging anyone."""
+    token = paypal_access_token()
+    result: dict[str, bool] = {}
+    for plan_code, plan_id in settings.paypal_plan_ids.items():
+        if not plan_id:
+            result[plan_code] = False
+            continue
+        try:
+            plan = _paypal_request(
+                f"/v1/billing/plans/{plan_id}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            result[plan_code] = str(plan.get("status") or "").upper() == "ACTIVE"
+        except HTTPException:
+            result[plan_code] = False
+    return result
+
+
 def verify_paypal_webhook(headers: dict[str, str], payload: dict[str, Any]) -> bool:
     if not settings.paypal_webhook_id:
         return False
