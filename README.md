@@ -21,6 +21,8 @@ The root [`render.yaml`](render.yaml) is intentionally a safe preview. It cannot
 
 For the live product, create **one** Render Blueprint from [`render.production.yaml`](render.production.yaml). It provisions exactly one web service and one Render Postgres database. The database uses Render's `basic-256mb` plan, so review its current cost in Render before deploying.
 
+The API uses `api.opsnestone.com`. Keep `opsnestone.com` available for the public website. Add a `CNAME` DNS record named `api` that points to `opsnest-cloud-api.onrender.com`, then verify the custom domain in the Render service settings.
+
 1. In Render choose **New > Blueprint**, select this GitHub repository, and set **Blueprint Path** to `render.production.yaml`.
 2. Deploy the Blueprint. Confirm that `https://opsnest-cloud-api.onrender.com/health` reports `{"status":"ok","service":"opsnest-cloud"}`.
 3. Add the values marked `sync:false` in the Render service's Environment page. Keep those credentials out of GitHub.

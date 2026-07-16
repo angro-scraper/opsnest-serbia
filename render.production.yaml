@@ -7,12 +7,16 @@ services:
     startCommand: uvicorn opsnest_cloud.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     autoDeployTrigger: commit
+    domains:
+      - api.opsnestone.com
     envVars:
       # The first deploy stays safe until every secret below is configured.
       - key: APP_ENV
         value: preview
       - key: APP_PUBLIC_URL
-        value: https://opsnest-cloud-api.onrender.com
+        value: https://api.opsnestone.com
+      - key: CORS_ORIGINS
+        value: https://opsnestone.com
       - key: APP_SIGNING_SECRET
         generateValue: true
       - key: DATABASE_URL
