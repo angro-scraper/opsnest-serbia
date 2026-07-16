@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>https://opsnestone.com/</loc></url>
-  <url><loc>https://opsnestone.com/pricing</loc></url>
-  <url><loc>https://opsnestone.com/getting-started</loc></url>
-  <url><loc>https://opsnestone.com/support</loc></url>
-  <url><loc>https://opsnestone.com/privacy</loc></url>
-  <url><loc>https://opsnestone.com/terms</loc></url>
-  <url><loc>https://opsnestone.com/cancellation</loc></url>
+  <url><loc>https://opsnestone.com/pricing.html</loc></url>
+  <url><loc>https://opsnestone.com/getting-started.html</loc></url>
+  <url><loc>https://opsnestone.com/support.html</loc></url>
+  <url><loc>https://opsnestone.com/privacy.html</loc></url>
+  <url><loc>https://opsnestone.com/terms.html</loc></url>
+  <url><loc>https://opsnestone.com/cancellation.html</loc></url>
 </urlset>
