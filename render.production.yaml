@@ -57,7 +57,7 @@ services:
         value: support@opsnestone.com
       # Publish the signed Windows setup URL and version before each release.
       - key: DESKTOP_LATEST_VERSION
-        value: 2.8.6
+        value: 2.8.7
       - key: DESKTOP_INSTALLER_URL
         sync: false
       - key: TURNSTILE_SITE_KEY

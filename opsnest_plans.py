@@ -21,8 +21,10 @@ PLAN_CATALOG: dict[str, dict[str, Any]] = {
         "projects": 3,
         "issued_invoices_per_month": 30,
         "pdf_imports_per_month": 30,
+        "seats": 1,
         "features": {"core_invoicing", "pdf_excel", "project_dashboard", "email_support"},
         "highlights": [
+            "1 local owner seat",
             "3 active projects",
             "30 issued invoices per month",
             "30 PDF imports per month",
@@ -37,6 +39,7 @@ PLAN_CATALOG: dict[str, dict[str, Any]] = {
         "projects": 15,
         "issued_invoices_per_month": 250,
         "pdf_imports_per_month": 250,
+        "seats": 5,
         "features": {
             "core_invoicing",
             "pdf_excel",
@@ -46,8 +49,10 @@ PLAN_CATALOG: dict[str, dict[str, Any]] = {
             "bank_matching",
             "vat_evidence",
             "accountant_export",
+            "team_users",
         },
         "highlights": [
+            "Up to 5 team seats",
             "15 active projects",
             "250 issued invoices per month",
             "250 PDF imports per month",
@@ -62,6 +67,7 @@ PLAN_CATALOG: dict[str, dict[str, Any]] = {
         "projects": None,
         "issued_invoices_per_month": None,
         "pdf_imports_per_month": None,
+        "seats": 20,
         "features": {
             "core_invoicing",
             "pdf_excel",
@@ -73,8 +79,10 @@ PLAN_CATALOG: dict[str, dict[str, Any]] = {
             "accountant_export",
             "advanced_pdf_import",
             "priority_support",
+            "team_users",
         },
         "highlights": [
+            "Up to 20 team seats",
             "Unlimited active projects",
             "Unlimited issued invoices and PDF imports",
             "All Business tools plus advanced PDF processing",
@@ -119,6 +127,7 @@ def public_plan_catalog() -> list[dict[str, Any]]:
             "projects": data["projects"],
             "issued_invoices_per_month": data["issued_invoices_per_month"],
             "pdf_imports_per_month": data["pdf_imports_per_month"],
+            "seats": data["seats"],
             "highlights": list(data["highlights"]),
         }
         for code, data in PLAN_CATALOG.items()
