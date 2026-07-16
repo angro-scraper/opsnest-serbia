@@ -1,4 +1,7 @@
 RewriteEngine On
+
+# Keep an unambiguous, branded page when a visitor follows an outdated link.
+ErrorDocument 404 /404.html
 RewriteRule ^pricing/?$ pricing.html [L]
 RewriteRule ^getting-started/?$ getting-started.html [L]
 RewriteRule ^support/?$ support.html [L]
