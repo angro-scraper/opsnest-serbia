@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .config import settings
+from .desktop_release import current_desktop_release
 from .database import (
     EmailChallenge,
     MemberSession,
@@ -367,11 +368,11 @@ def public_plans() -> dict[str, Any]:
 @app.get("/v1/public/desktop-update")
 def desktop_update() -> dict[str, str]:
     """Public update metadata used by the Windows app; no workspace data is needed."""
-    return {
-        "latest_version": settings.desktop_latest_version,
-        "installer_url": settings.desktop_installer_url,
-        "installer_sha256": settings.desktop_installer_sha256,
-    }
+    return current_desktop_release(
+        settings.desktop_latest_version,
+        settings.desktop_installer_url,
+        settings.desktop_installer_sha256,
+    )
 
 
 @app.get("/activate", response_class=HTMLResponse)
