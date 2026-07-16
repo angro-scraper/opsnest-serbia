@@ -15,6 +15,8 @@ This service supports the global product without moving customer bookkeeping to 
 
 This repository intentionally contains no customer databases, invoice templates, company logos, e-mail passwords, PayPal credentials, or production configuration. Render secrets are entered only in the Render dashboard.
 
+Activation URLs contain only an opaque workspace identifier. The company name and e-mail are entered by the customer in the protected browser form and are never placed in the URL.
+
 ## Deploy
 
 The root [`render.yaml`](render.yaml) is intentionally a safe preview. It cannot accidentally open real registrations or billing.
