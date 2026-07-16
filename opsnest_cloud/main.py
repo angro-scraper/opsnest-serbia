@@ -935,7 +935,7 @@ def create_checkout_session(plan_code: str, workspace: Workspace = Depends(_work
 
 
 @app.get("/v1/billing/checkout-context")
-def checkout_context(session: str) -> dict[str, str]:
+def checkout_context(session: str) -> dict[str, Any]:
     payload = verify_checkout_session(session)
     if not payload:
         raise HTTPException(status_code=400, detail="Checkout session expired. Return to OpsNest and try again.")
@@ -943,12 +943,16 @@ def checkout_context(session: str) -> dict[str, str]:
     plan_id = settings.paypal_plan_ids.get(plan_code)
     if not plan_id or not settings.paypal_client_id:
         raise HTTPException(status_code=503, detail="PayPal plans are not configured yet.")
+    plan = plan_details(plan_code)
     return {
         "workspace_id": str(payload["workspace_id"]),
         "plan_code": plan_code,
         "plan_id": plan_id,
         "client_id": settings.paypal_client_id,
         "price": PLAN_PRICES[plan_code],
+        "plan_name": str(plan["name"]),
+        "seats": int(plan["seats"]),
+        "highlights": list(plan["highlights"]),
     }
 
 
@@ -1018,9 +1022,93 @@ def checkout_page(session: str) -> HTMLResponse:
     safe_session = escape(session, quote=True)
     paypal_sdk_host = "www.sandbox.paypal.com" if settings.paypal_mode == "sandbox" else "www.paypal.com"
     return HTMLResponse(
-        """<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>OpsNest subscription</title><style>body{font-family:Segoe UI,sans-serif;background:#f3f7f6;color:#10241c;margin:0;padding:32px}.card{max-width:540px;margin:auto;background:#fff;border-radius:18px;padding:32px;box-shadow:0 14px 40px #1232}.muted{color:#55706a}</style></head><body><main class=\"card\"><h1>OpsNest</h1><p id=\"plan\" class=\"muted\">Preparing secure checkout...</p><div id=\"paypal-button-container\"></div><p id=\"status\" class=\"muted\"></p></main><script>const session='"""
+        """<!doctype html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"utf-8\">
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+  <meta name=\"theme-color\" content=\"#0c8278\">
+  <title>OpsNest | Secure subscription checkout</title>
+  <style>
+    :root { --ink:#112f36; --muted:#587078; --teal:#0c8278; --teal-dark:#06645d; --mint:#e7f5f0; --line:#d6e5e1; --warm:#fff6df; --paper:#ffffff; }
+    * { box-sizing:border-box; }
+    body { min-width:320px; margin:0; color:var(--ink); background:radial-gradient(circle at 11% 14%,#fff4d4 0,transparent 30%),radial-gradient(circle at 90% 87%,#d7f2e9 0,transparent 35%),#f5fbf9; font-family:Segoe UI,Arial,sans-serif; }
+    .page { width:min(1120px,calc(100% - 40px)); min-height:100vh; margin:0 auto; padding:36px 0 46px; }
+    .brand { display:inline-flex; align-items:center; gap:12px; color:inherit; text-decoration:none; }
+    .brand img { width:42px; height:42px; object-fit:contain; }
+    .brand strong { display:block; font-size:1.32rem; line-height:1; letter-spacing:-.03em; }
+    .brand span { display:block; margin-top:4px; color:var(--muted); font-size:.79rem; }
+    .back { float:right; margin-top:11px; color:var(--teal-dark); font-size:.9rem; font-weight:700; text-decoration:none; }
+    .back:hover { text-decoration:underline; }
+    .checkout { display:grid; grid-template-columns:minmax(0,1.04fr) minmax(380px,.96fr); gap:24px; align-items:stretch; margin-top:34px; }
+    .intro { position:relative; overflow:hidden; min-height:530px; padding:48px; border:1px solid #cfe8df; border-radius:28px; background:linear-gradient(148deg,#e5f5ef 0%,#fafdff 58%,#fff3d9 100%); }
+    .intro::after { position:absolute; right:-90px; bottom:-100px; width:290px; height:290px; border:34px solid rgba(12,130,120,.12); border-radius:50%; content:\"\"; }
+    .eyebrow { color:var(--teal-dark); font-size:.78rem; font-weight:800; letter-spacing:.1em; text-transform:uppercase; }
+    h1 { max-width:560px; margin:12px 0 14px; font-size:clamp(2.3rem,4.2vw,3.55rem); line-height:.98; letter-spacing:-.065em; }
+    .lede { max-width:530px; margin:0; color:var(--muted); font-size:1.06rem; line-height:1.58; }
+    .summary { position:relative; z-index:1; margin-top:34px; padding:23px; border:1px solid rgba(124,185,171,.52); border-radius:18px; background:rgba(255,255,255,.8); box-shadow:0 13px 30px rgba(15,70,66,.06); }
+    .summary-top { display:flex; justify-content:space-between; gap:18px; align-items:flex-start; }
+    .summary h2 { margin:5px 0 0; font-size:1.55rem; letter-spacing:-.04em; }
+    .price { color:var(--teal-dark); font-size:1.18rem; font-weight:800; text-align:right; white-space:nowrap; }
+    .summary ul { display:grid; gap:9px; margin:20px 0 0; padding:0; list-style:none; }
+    .summary li { position:relative; padding-left:23px; color:#46666c; font-size:.92rem; line-height:1.4; }
+    .summary li::before { position:absolute; left:0; color:var(--teal); content:\"+\"; font-size:1.1rem; font-weight:900; }
+    .payment { display:flex; flex-direction:column; padding:42px; border:1px solid var(--line); border-radius:28px; background:var(--paper); box-shadow:0 22px 48px rgba(18,63,61,.12); }
+    .secure { display:inline-flex; align-items:center; gap:7px; width:max-content; padding:7px 10px; border-radius:999px; color:var(--teal-dark); background:var(--mint); font-size:.76rem; font-weight:800; }
+    .secure::before { content:\"\u2713\"; font-size:.93rem; }
+    .payment h2 { margin:18px 0 9px; font-size:2rem; letter-spacing:-.05em; }
+    .payment > p { margin:0; color:var(--muted); line-height:1.55; }
+    .paypal-area { margin-top:29px; padding:20px; border:1px solid var(--line); border-radius:16px; background:#fbfefd; }
+    #paypal-button-container { min-height:88px; }
+    .loading { padding:18px 0; color:var(--muted); text-align:center; }
+    .status { min-height:22px; margin:17px 0 0; color:var(--muted); font-size:.9rem; line-height:1.45; }
+    .status.error { color:#a23535; }
+    .success { display:none; margin-top:24px; padding:18px; border:1px solid #9cd7c4; border-radius:15px; color:#175e4f; background:#e7f7ef; line-height:1.5; }
+    .success strong { display:block; margin-bottom:4px; font-size:1.05rem; }
+    .payment-footer { margin-top:auto; padding-top:24px; color:var(--muted); font-size:.82rem; line-height:1.5; }
+    .payment-footer b { color:var(--ink); }
+    @media (max-width:820px) { .page { width:min(100% - 28px,620px); padding-top:24px; } .checkout { grid-template-columns:1fr; margin-top:25px; } .intro { min-height:auto; padding:31px 25px; } .payment { padding:31px 25px; } }
+    @media (max-width:460px) { .back { float:none; display:block; width:max-content; margin:20px 0 0; } .summary-top { display:block; } .price { margin-top:12px; text-align:left; } .payment h2 { font-size:1.75rem; } }
+  </style>
+</head>
+<body>
+  <main class=\"page\">
+    <a class=\"brand\" href=\"https://opsnestone.com/\" aria-label=\"OpsNest home\"><img src=\"https://opsnestone.com/assets/opsnest-mark.png\" alt=\"OpsNest logo\"><span><strong>OpsNest</strong><span>Project accounting</span></span></a>
+    <a class=\"back\" href=\"https://opsnestone.com/pricing.html\">Back to packages</a>
+    <section class=\"checkout\">
+      <article class=\"intro\">
+        <div class=\"eyebrow\">Your selected package</div>
+        <h1>A clear subscription, built for practical work.</h1>
+        <p class=\"lede\">Review the monthly package before payment. The owner can manage members, change package or cancel future renewal directly in PayPal.</p>
+        <div class=\"summary\" aria-live=\"polite\">
+          <div class=\"summary-top\"><div><div class=\"eyebrow\">OpsNest plan</div><h2 id=\"plan-name\">Preparing your package...</h2></div><div id=\"plan-price\" class=\"price\">EUR</div></div>
+          <ul id=\"plan-features\"></ul>
+        </div>
+      </article>
+      <article class=\"payment\">
+        <div class=\"secure\">PayPal secure checkout</div>
+        <h2>Complete payment</h2>
+        <p>Choose PayPal or a debit or credit card below. OpsNest never receives or stores your card details.</p>
+        <div class=\"paypal-area\"><div id=\"paypal-button-container\"><div class=\"loading\">Preparing secure PayPal checkout...</div></div></div>
+        <p id=\"status\" class=\"status\" role=\"status\"></p>
+        <div id=\"success\" class=\"success\"><strong>Subscription activated.</strong>Return to OpsNest and choose Refresh in Plans and billing. Your package will be available shortly.</div>
+        <p class=\"payment-footer\"><b>Monthly subscription.</b> Your payment is handled by PayPal. You can stop future renewals at any time from your PayPal automatic payments.</p>
+      </article>
+    </section>
+  </main>
+  <script>const session='"""
         + safe_session
-        + """';fetch('/v1/billing/checkout-context?session='+encodeURIComponent(session)).then(r=>r.json()).then(data=>{if(data.detail)throw Error(data.detail);document.getElementById('plan').textContent=data.plan_code.toUpperCase()+' - '+data.price;const script=document.createElement('script');script.src='https://"""
+        + """';
+const paypalSdkHost='"""
         + paypal_sdk_host
-        + """/sdk/js?client-id='+encodeURIComponent(data.client_id)+'&vault=true&intent=subscription&currency=EUR';script.onload=()=>paypal.Buttons({createSubscription:(d,a)=>a.subscription.create({plan_id:data.plan_id}),onApprove:(data)=>fetch('/v1/billing/record-paypal-approval',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session:session,subscription_id:data.subscriptionID})}).then(r=>r.json()).then(result=>{document.getElementById('status').textContent=result.ok?'Subscription activated. Return to OpsNest.':'Activation is being verified.';})}).render('#paypal-button-container');document.head.appendChild(script);}).catch(error=>document.getElementById('status').textContent=error.message);</script></body></html>"""
+        + """';
+const statusNode=document.getElementById('status');
+const setStatus=(message,isError=false)=>{statusNode.textContent=message||'';statusNode.className='status'+(isError?' error':'');};
+const renderPlan=(data)=>{document.getElementById('plan-name').textContent=data.plan_name+' plan';document.getElementById('plan-price').textContent=data.price;const features=document.getElementById('plan-features');features.replaceChildren(...(data.highlights||[]).map(item=>{const li=document.createElement('li');li.textContent=item;return li;}));};
+const showSuccess=()=>{document.getElementById('paypal-button-container').style.display='none';document.getElementById('success').style.display='block';setStatus('');};
+const loadPayPal=(data)=>{const script=document.createElement('script');script.src='https://'+paypalSdkHost+'/sdk/js?client-id='+encodeURIComponent(data.client_id)+'&vault=true&intent=subscription&currency=EUR';script.onload=()=>paypal.Buttons({createSubscription:(details,actions)=>actions.subscription.create({plan_id:data.plan_id}),onApprove:(approval)=>fetch('/v1/billing/record-paypal-approval',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session:session,subscription_id:approval.subscriptionID})}).then(response=>response.json()).then(result=>{if(!result.ok)throw Error(result.detail||'We could not verify the subscription yet.');showSuccess();}).catch(error=>setStatus(error.message,true)),onError:()=>setStatus('PayPal could not open the payment form. Please try again or return to OpsNest.',true)}).render('#paypal-button-container');script.onerror=()=>setStatus('PayPal checkout could not be loaded. Check your connection and try again.',true);document.head.appendChild(script);};
+fetch('/v1/billing/checkout-context?session='+encodeURIComponent(session)).then(response=>response.json()).then(data=>{if(data.detail)throw Error(data.detail);renderPlan(data);loadPayPal(data);}).catch(error=>setStatus(error.message||'Checkout is unavailable. Return to OpsNest and try again.',true));
+  </script>
+</body>
+</html>"""
     )
