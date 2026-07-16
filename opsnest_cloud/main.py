@@ -22,6 +22,7 @@ from .security import new_client_token, new_email_code, secret_hash, sign_checko
 from .services import (
     effective_license,
     get_paypal_subscription,
+    paypal_access_token,
     send_support_diagnostic,
     send_verification_email,
     start_trial,
@@ -297,16 +298,26 @@ def billing_summary(workspace: Workspace = Depends(_workspace_dependency)) -> di
 def billing_readiness(workspace: Workspace = Depends(_workspace_dependency)) -> dict[str, Any]:
     """Expose only safe capability flags to an authenticated desktop workspace."""
     plan_ready = {plan: bool(plan_id) for plan, plan_id in settings.paypal_plan_ids.items()}
-    ready = bool(
+    configured = bool(
         settings.paypal_client_id
         and settings.paypal_client_secret
         and settings.paypal_webhook_id
         and all(plan_ready.values())
     )
+    credentials_valid = False
+    if configured:
+        try:
+            paypal_access_token()
+            credentials_valid = True
+        except HTTPException:
+            # Do not expose provider details or credentials to a desktop client.
+            credentials_valid = False
     return {
         "provider": "paypal",
         "mode": settings.paypal_mode,
-        "ready": ready,
+        "configured": configured,
+        "credentials_valid": credentials_valid,
+        "ready": configured and credentials_valid,
         "plans": plan_ready,
     }
 

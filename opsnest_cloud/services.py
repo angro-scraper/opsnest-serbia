@@ -225,7 +225,6 @@ def get_paypal_subscription(subscription_id: str) -> dict[str, Any]:
 def verify_paypal_webhook(headers: dict[str, str], payload: dict[str, Any]) -> bool:
     if not settings.paypal_webhook_id:
         return False
-    token = paypal_access_token()
     required_headers = {
         "auth_algo": headers.get("paypal-auth-algo", ""),
         "cert_url": headers.get("paypal-cert-url", ""),
@@ -235,6 +234,9 @@ def verify_paypal_webhook(headers: dict[str, str], payload: dict[str, Any]) -> b
     }
     if not all(required_headers.values()):
         return False
+    # Reject malformed requests locally before using the PayPal API. This keeps
+    # forged webhook traffic cheap and makes the authentication check explicit.
+    token = paypal_access_token()
     verification = _paypal_request(
         "/v1/notifications/verify-webhook-signature",
         method="POST",
