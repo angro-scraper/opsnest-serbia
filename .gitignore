@@ -1,0 +1,24 @@
+# Python and local tooling
+__pycache__/
+*.py[cod]
+.venv/
+.env
+
+# Generated Windows packages and local application data
+build/
+dist/
+release/
+*.spec
+Data/
+Fakture/
+Prilozi/
+Backup/
+
+# Customer-specific invoice design and branding stay private.
+assets/invoice_template.xlsx
+assets/logo.*
+
+# Cloud service secrets and local development database
+opsnest_cloud/.env
+opsnest_cloud/*.db
+opsnest_cloud/__pycache__/
