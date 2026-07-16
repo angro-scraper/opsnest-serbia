@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
+from threading import Lock
 from html import escape
 from typing import Annotated, Any
 
@@ -47,7 +49,7 @@ app.add_middleware(
     allow_origins=list(settings.allowed_origins) or [settings.public_url],
     allow_credentials=False,
     allow_methods=["GET", "POST"],
-    allow_headers=["Authorization", "Content-Type", "X-OpsNest-Workspace"],
+    allow_headers=["Authorization", "Content-Type", "X-OpsNest-Workspace", "X-OpsNest-Client"],
 )
 
 
@@ -62,6 +64,12 @@ class ConfirmEmailCode(BaseModel):
     workspace_id: str = Field(min_length=36, max_length=36)
     email: str = Field(min_length=5, max_length=320)
     code: str = Field(min_length=6, max_length=6)
+
+
+_desktop_activation_attempts: dict[str, deque[datetime]] = defaultdict(deque)
+_desktop_activation_lock = Lock()
+_DESKTOP_ACTIVATION_WINDOW = timedelta(minutes=15)
+_DESKTOP_ACTIVATION_LIMIT = 3
 
 
 class RecordPayPalApproval(BaseModel):
@@ -81,6 +89,23 @@ def _normalize_email(value: str) -> str:
     if "@" not in email or email.startswith("@") or email.endswith("@"):
         raise HTTPException(status_code=422, detail="Enter a valid e-mail address.")
     return email
+
+
+def _limit_desktop_activation(remote_ip: str) -> None:
+    """Desktop sign-up has no browser CAPTCHA, so strictly limit code requests."""
+    identifier = remote_ip.strip() or "unknown"
+    now = datetime.utcnow()
+    with _desktop_activation_lock:
+        attempts = _desktop_activation_attempts[identifier]
+        cutoff = now - _DESKTOP_ACTIVATION_WINDOW
+        while attempts and attempts[0] <= cutoff:
+            attempts.popleft()
+        if len(attempts) >= _DESKTOP_ACTIVATION_LIMIT:
+            raise HTTPException(
+                status_code=429,
+                detail="Too many registration requests. Try again in 15 minutes.",
+            )
+        attempts.append(now)
 
 
 def _get_authenticated_workspace(
@@ -131,13 +156,18 @@ def activation_page(workspace_id: str) -> HTMLResponse:
 def request_email_code(
     payload: RequestEmailCode,
     request: Request,
+    desktop_client: Annotated[str | None, Header(alias="X-OpsNest-Client")] = None,
     db: Session = Depends(get_session),
 ) -> dict[str, Any]:
     workspace_id = _validate_workspace_id(payload.workspace_id)
     email = _normalize_email(payload.email)
-    if settings.is_production:
+    if settings.is_production and payload.turnstile_token.strip():
         verify_turnstile_token(payload.turnstile_token, request.client.host if request.client else "")
-    if not settings.is_development and (not settings.smtp_host or not settings.smtp_from_email):
+    elif settings.is_production:
+        if str(desktop_client or "").strip().lower() != "desktop":
+            raise HTTPException(status_code=400, detail="Complete the bot protection check and try again.")
+        _limit_desktop_activation(request.client.host if request.client else "")
+    if not settings.is_development and (not settings.smtp_from_email or not (settings.resend_api_key or settings.smtp_host)):
         raise HTTPException(status_code=503, detail="Online activation is not configured yet.")
     existing_email = db.scalar(select(Workspace).where(Workspace.owner_email == email))
     if existing_email and existing_email.id != workspace_id:
