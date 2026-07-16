@@ -50,6 +50,9 @@ services:
         value: support@opsnestone.com
       - key: SMTP_FROM_NAME
         value: OpsNest Support
+      # Render free web services block outbound SMTP. Use the HTTPS mail API.
+      - key: RESEND_API_KEY
+        sync: false
       - key: TURNSTILE_SITE_KEY
         sync: false
       - key: TURNSTILE_SECRET_KEY

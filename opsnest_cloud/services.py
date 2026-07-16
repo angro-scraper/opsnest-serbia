@@ -51,17 +51,24 @@ def start_trial(workspace: Workspace) -> None:
 
 
 def send_verification_email(email: str, code: str, company_name: str) -> None:
-    if not settings.smtp_host or not settings.smtp_from_email:
+    if not settings.smtp_from_email:
         raise HTTPException(status_code=503, detail="E-mail verification is not configured yet.")
-    message = EmailMessage()
-    message["Subject"] = "OpsNest verification code"
-    message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
-    message["To"] = email
-    message.set_content(
+    subject = "OpsNest verification code"
+    body = (
         f"Your OpsNest verification code is: {code}\n\n"
         f"Company: {company_name}\n"
         "The code expires in 15 minutes. If you did not start this registration, you can ignore this message."
     )
+    if settings.resend_api_key:
+        _send_resend_email(email, subject, body)
+        return
+    if not settings.smtp_host:
+        raise HTTPException(status_code=503, detail="E-mail verification is not configured yet.")
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
+    message["To"] = email
+    message.set_content(body)
     try:
         with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=20) as client:
             client.starttls()
@@ -69,6 +76,32 @@ def send_verification_email(email: str, code: str, company_name: str) -> None:
                 client.login(settings.smtp_username, settings.smtp_password)
             client.send_message(message)
     except (OSError, smtplib.SMTPException) as exc:
+        raise HTTPException(status_code=502, detail="Verification e-mail could not be sent.") from exc
+
+
+def _send_resend_email(email: str, subject: str, body: str) -> None:
+    """Send through HTTPS so Render free services never need SMTP egress."""
+    request = Request(
+        "https://api.resend.com/emails",
+        data=json.dumps(
+            {
+                "from": f"{settings.smtp_from_name} <{settings.smtp_from_email}>",
+                "to": [email],
+                "subject": subject,
+                "text": body,
+            }
+        ).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {settings.resend_api_key}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=20):
+            return
+    except (HTTPError, URLError, OSError) as exc:
         raise HTTPException(status_code=502, detail="Verification e-mail could not be sent.") from exc
 
 

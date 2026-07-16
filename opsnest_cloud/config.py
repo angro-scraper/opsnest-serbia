@@ -29,6 +29,7 @@ class Settings:
     smtp_password: str
     smtp_from_email: str
     smtp_from_name: str
+    resend_api_key: str
     turnstile_site_key: str
     turnstile_secret_key: str
 
@@ -59,6 +60,7 @@ class Settings:
             smtp_password=_value("SMTP_PASSWORD"),
             smtp_from_email=_value("SMTP_FROM_EMAIL"),
             smtp_from_name=_value("SMTP_FROM_NAME", "OpsNest"),
+            resend_api_key=_value("RESEND_API_KEY"),
             turnstile_site_key=_value("TURNSTILE_SITE_KEY"),
             turnstile_secret_key=_value("TURNSTILE_SECRET_KEY"),
         )
@@ -88,6 +90,7 @@ class Settings:
             return
         public_url = urlparse(self.public_url)
         database_is_postgres = self.database_url.startswith("postgresql+psycopg://")
+        email_delivery_configured = bool(self.resend_api_key) or bool(self.smtp_host and self.smtp_from_email)
         required = {
             "DATABASE_URL": self.database_url if database_is_postgres else "",
             "APP_SIGNING_SECRET": self.signing_secret if self.signing_secret != "development-only-change-me" else "",
@@ -99,8 +102,8 @@ class Settings:
             "PAYPAL_PLAN_STARTER": self.paypal_plan_starter,
             "PAYPAL_PLAN_BUSINESS": self.paypal_plan_business,
             "PAYPAL_PLAN_PRO": self.paypal_plan_pro,
-            "SMTP_HOST": self.smtp_host,
             "SMTP_FROM_EMAIL": self.smtp_from_email,
+            "RESEND_API_KEY_OR_SMTP_HOST": "configured" if email_delivery_configured else "",
             "TURNSTILE_SITE_KEY": self.turnstile_site_key,
             "TURNSTILE_SECRET_KEY": self.turnstile_secret_key,
         }

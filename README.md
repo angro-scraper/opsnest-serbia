@@ -37,8 +37,11 @@ Enter these only in the Render dashboard after deployment:
 
 - `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID`
 - `PAYPAL_PLAN_STARTER`, `PAYPAL_PLAN_BUSINESS`, `PAYPAL_PLAN_PRO`
-- `SMTP_USERNAME`, `SMTP_PASSWORD`
+- `RESEND_API_KEY` for e-mail delivery over HTTPS (recommended for Render Free)
+- `SMTP_USERNAME`, `SMTP_PASSWORD` only if the service is upgraded to a paid Render instance
 - `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`
+
+Render Free blocks outbound SMTP ports. Verify `opsnestone.com` in Resend, then set `RESEND_API_KEY` in the Render dashboard. OpsNest uses `support@opsnestone.com` as the sender and automatically prefers Resend when this key is configured.
 
 ## Local development
 
