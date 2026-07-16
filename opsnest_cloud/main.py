@@ -248,6 +248,24 @@ def license_status(workspace: Workspace = Depends(_workspace_dependency)) -> dic
     return effective_license(workspace)
 
 
+@app.get("/v1/billing/readiness")
+def billing_readiness(workspace: Workspace = Depends(_workspace_dependency)) -> dict[str, Any]:
+    """Expose only safe capability flags to an authenticated desktop workspace."""
+    plan_ready = {plan: bool(plan_id) for plan, plan_id in settings.paypal_plan_ids.items()}
+    ready = bool(
+        settings.paypal_client_id
+        and settings.paypal_client_secret
+        and settings.paypal_webhook_id
+        and all(plan_ready.values())
+    )
+    return {
+        "provider": "paypal",
+        "mode": settings.paypal_mode,
+        "ready": ready,
+        "plans": plan_ready,
+    }
+
+
 @app.post("/v1/billing/checkout-session/{plan_code}")
 def create_checkout_session(plan_code: str, workspace: Workspace = Depends(_workspace_dependency)) -> dict[str, str]:
     plan = plan_code.lower().strip()
