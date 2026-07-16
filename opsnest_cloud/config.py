@@ -30,6 +30,9 @@ class Settings:
     smtp_from_email: str
     smtp_from_name: str
     resend_api_key: str
+    support_email: str
+    desktop_latest_version: str
+    desktop_installer_url: str
     turnstile_site_key: str
     turnstile_secret_key: str
 
@@ -61,6 +64,9 @@ class Settings:
             smtp_from_email=_value("SMTP_FROM_EMAIL"),
             smtp_from_name=_value("SMTP_FROM_NAME", "OpsNest"),
             resend_api_key=_value("RESEND_API_KEY"),
+            support_email=_value("SUPPORT_EMAIL", _value("SMTP_FROM_EMAIL")),
+            desktop_latest_version=_value("DESKTOP_LATEST_VERSION", "0.0.0"),
+            desktop_installer_url=_value("DESKTOP_INSTALLER_URL"),
             turnstile_site_key=_value("TURNSTILE_SITE_KEY"),
             turnstile_secret_key=_value("TURNSTILE_SECRET_KEY"),
         )

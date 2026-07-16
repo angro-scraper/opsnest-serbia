@@ -14,9 +14,9 @@ from fastapi import HTTPException
 
 from .config import settings
 from .database import Workspace
+from opsnest_plans import TRIAL_DAYS, effective_plan_code, normalize_plan_code, plan_details
 
 
-TRIAL_DAYS = 7
 PAYPAL_WRITE_STATUSES = {"trial", "active"}
 
 
@@ -32,10 +32,13 @@ def effective_license(workspace: Workspace, *, now: datetime | None = None) -> d
             days_remaining = max(1, int((seconds + 86_399) // 86_400))
     return {
         "workspace_id": workspace.id,
-        "plan_code": workspace.plan_code,
+        "plan_code": normalize_plan_code(workspace.plan_code),
+        "effective_plan_code": effective_plan_code(status, workspace.plan_code),
+        "plan_name": plan_details(workspace.plan_code)["name"],
         "status": status,
         "can_write": status in PAYPAL_WRITE_STATUSES,
         "days_remaining": days_remaining,
+        "trial_started_at": workspace.trial_started_at.isoformat() if workspace.trial_started_at else "",
         "trial_ends_at": workspace.trial_ends_at.isoformat() if workspace.trial_ends_at else "",
         "last_verified_at": workspace.last_verified_at.isoformat() if workspace.last_verified_at else "",
     }
@@ -77,6 +80,41 @@ def send_verification_email(email: str, code: str, company_name: str) -> None:
             client.send_message(message)
     except (OSError, smtplib.SMTPException) as exc:
         raise HTTPException(status_code=502, detail="Verification e-mail could not be sent.") from exc
+
+
+def send_support_diagnostic(*, workspace: Workspace, diagnostic: dict[str, Any]) -> None:
+    """Deliver a deliberately small, non-accounting support report to OpsNest."""
+    if not settings.support_email or not settings.smtp_from_email:
+        raise HTTPException(status_code=503, detail="OpsNest support e-mail is not configured yet.")
+    body = "\n".join(
+        [
+            "OpsNest desktop diagnostic",
+            f"Workspace: ...{str(workspace.id)[-8:]}",
+            f"Application version: {diagnostic.get('app_version') or '-'}",
+            f"Operating system: {diagnostic.get('operating_system') or '-'}",
+            f"License status: {diagnostic.get('license_status') or '-'}",
+            f"Customer note: {diagnostic.get('message') or '-'}",
+            "Privacy: no invoices, PDF files, passwords, PINs, or payment data were attached.",
+        ]
+    )
+    if settings.resend_api_key:
+        _send_resend_email(settings.support_email, "OpsNest diagnostic report", body)
+        return
+    if not settings.smtp_host:
+        raise HTTPException(status_code=503, detail="OpsNest support e-mail is not configured yet.")
+    message = EmailMessage()
+    message["Subject"] = "OpsNest diagnostic report"
+    message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
+    message["To"] = settings.support_email
+    message.set_content(body)
+    try:
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=20) as client:
+            client.starttls()
+            if settings.smtp_username:
+                client.login(settings.smtp_username, settings.smtp_password)
+            client.send_message(message)
+    except (OSError, smtplib.SMTPException) as exc:
+        raise HTTPException(status_code=502, detail="Diagnostic report could not be sent.") from exc
 
 
 def _send_resend_email(email: str, subject: str, body: str) -> None:

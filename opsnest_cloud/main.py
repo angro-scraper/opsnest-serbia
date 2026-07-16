@@ -22,18 +22,16 @@ from .security import new_client_token, new_email_code, secret_hash, sign_checko
 from .services import (
     effective_license,
     get_paypal_subscription,
+    send_support_diagnostic,
     send_verification_email,
     start_trial,
     verify_paypal_webhook,
     verify_turnstile_token,
 )
+from opsnest_plans import PLAN_CATALOG, TRIAL_DAYS, public_plan_catalog
 
 
-PLAN_PRICES = {
-    "starter": "9.90 EUR / month",
-    "business": "19.90 EUR / month",
-    "pro": "29.90 EUR / month",
-}
+PLAN_PRICES = {code: f"{data['price_eur']} EUR / month" for code, data in PLAN_CATALOG.items()}
 
 
 @asynccontextmanager
@@ -75,6 +73,13 @@ _DESKTOP_ACTIVATION_LIMIT = 3
 class RecordPayPalApproval(BaseModel):
     session: str = Field(min_length=20, max_length=2048)
     subscription_id: str = Field(min_length=3, max_length=128)
+
+
+class DiagnosticReport(BaseModel):
+    app_version: str = Field(default="", max_length=64)
+    operating_system: str = Field(default="", max_length=240)
+    license_status: str = Field(default="", max_length=64)
+    message: str = Field(default="", max_length=800)
 
 
 def _validate_workspace_id(value: str) -> str:
@@ -132,6 +137,21 @@ def _workspace_dependency(
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "opsnest-cloud"}
+
+
+@app.get("/v1/public/plans")
+def public_plans() -> dict[str, Any]:
+    """Public, payment-safe catalog for the desktop app and website."""
+    return {"currency": "EUR", "trial_days": TRIAL_DAYS, "plans": public_plan_catalog()}
+
+
+@app.get("/v1/public/desktop-update")
+def desktop_update() -> dict[str, str]:
+    """Public update metadata used by the Windows app; no workspace data is needed."""
+    return {
+        "latest_version": settings.desktop_latest_version,
+        "installer_url": settings.desktop_installer_url,
+    }
 
 
 @app.get("/activate", response_class=HTMLResponse)
@@ -237,7 +257,8 @@ def confirm_email_code(payload: ConfirmEmailCode, db: Session = Depends(get_sess
         raise HTTPException(status_code=404, detail="Workspace not found.")
     challenge.used_at = datetime.utcnow()
     workspace.email_verified_at = datetime.utcnow()
-    if workspace.subscription_status in {"verification_pending", "expired", "cancelled"} and not workspace.trial_started_at:
+    # The trial starts at registration confirmation, not when a user later opens billing.
+    if not workspace.trial_started_at:
         start_trial(workspace)
     token = new_client_token()
     workspace.client_token_hash = secret_hash(token)
@@ -249,6 +270,27 @@ def confirm_email_code(payload: ConfirmEmailCode, db: Session = Depends(get_sess
 @app.get("/v1/license")
 def license_status(workspace: Workspace = Depends(_workspace_dependency)) -> dict[str, Any]:
     return effective_license(workspace)
+
+
+@app.get("/v1/billing/summary")
+def billing_summary(workspace: Workspace = Depends(_workspace_dependency)) -> dict[str, Any]:
+    """Return subscription dates and the safe PayPal self-service cancellation route."""
+    license_data = effective_license(workspace)
+    next_billing_at = ""
+    if workspace.paypal_subscription_id:
+        try:
+            paypal_subscription = get_paypal_subscription(workspace.paypal_subscription_id)
+            billing_info = paypal_subscription.get("billing_info") if isinstance(paypal_subscription.get("billing_info"), dict) else {}
+            next_billing_at = str(billing_info.get("next_billing_time") or "")
+        except HTTPException:
+            # A temporary payment-provider error must not hide the local license state.
+            next_billing_at = ""
+    return {
+        **license_data,
+        "next_billing_at": next_billing_at,
+        "can_manage_in_paypal": bool(workspace.paypal_subscription_id),
+        "cancellation_url": "https://www.paypal.com/myaccount/autopay/",
+    }
 
 
 @app.get("/v1/billing/readiness")
@@ -269,10 +311,16 @@ def billing_readiness(workspace: Workspace = Depends(_workspace_dependency)) -> 
     }
 
 
+@app.post("/v1/support/diagnostic")
+def support_diagnostic(payload: DiagnosticReport, workspace: Workspace = Depends(_workspace_dependency)) -> dict[str, bool]:
+    send_support_diagnostic(workspace=workspace, diagnostic=payload.model_dump())
+    return {"ok": True}
+
+
 @app.post("/v1/billing/checkout-session/{plan_code}")
 def create_checkout_session(plan_code: str, workspace: Workspace = Depends(_workspace_dependency)) -> dict[str, str]:
     plan = plan_code.lower().strip()
-    if plan not in PLAN_PRICES:
+    if plan not in PLAN_CATALOG:
         raise HTTPException(status_code=422, detail="Unknown plan.")
     if not settings.paypal_plan_ids.get(plan) or not settings.paypal_client_id:
         raise HTTPException(status_code=503, detail="PayPal plans are not configured yet.")
