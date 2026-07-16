@@ -6,6 +6,27 @@ services:
     runtime: static
     staticPublishPath: public_site
     autoDeployTrigger: commit
+    # Render does not read Apache .htaccess files. Keep the same clean public
+    # URLs on the Render preview that the Adriahost site receives from .htaccess.
+    routes:
+      - type: rewrite
+        source: /pricing
+        destination: /pricing.html
+      - type: rewrite
+        source: /getting-started
+        destination: /getting-started.html
+      - type: rewrite
+        source: /support
+        destination: /support.html
+      - type: rewrite
+        source: /privacy
+        destination: /privacy.html
+      - type: rewrite
+        source: /terms
+        destination: /terms.html
+      - type: rewrite
+        source: /cancellation
+        destination: /cancellation.html
 
   - type: web
     name: opsnest-cloud-api
