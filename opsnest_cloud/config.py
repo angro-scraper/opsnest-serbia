@@ -28,6 +28,7 @@ class Settings:
     smtp_password: str
     smtp_from_email: str
     smtp_from_name: str
+    turnstile_site_key: str
     turnstile_secret_key: str
 
     @classmethod
@@ -57,6 +58,7 @@ class Settings:
             smtp_password=_value("SMTP_PASSWORD"),
             smtp_from_email=_value("SMTP_FROM_EMAIL"),
             smtp_from_name=_value("SMTP_FROM_NAME", "OpsNest"),
+            turnstile_site_key=_value("TURNSTILE_SITE_KEY"),
             turnstile_secret_key=_value("TURNSTILE_SECRET_KEY"),
         )
 
@@ -87,6 +89,7 @@ class Settings:
             "PAYPAL_WEBHOOK_ID": self.paypal_webhook_id,
             "SMTP_HOST": self.smtp_host,
             "SMTP_FROM_EMAIL": self.smtp_from_email,
+            "TURNSTILE_SITE_KEY": self.turnstile_site_key,
             "TURNSTILE_SECRET_KEY": self.turnstile_secret_key,
         }
         missing = [name for name, value in required.items() if not value]
