@@ -95,6 +95,7 @@ def _send_resend_email(email: str, subject: str, body: str) -> None:
             "Authorization": f"Bearer {settings.resend_api_key}",
             "Accept": "application/json",
             "Content-Type": "application/json",
+            "User-Agent": "OpsNest-Cloud/1.0",
         },
         method="POST",
     )
