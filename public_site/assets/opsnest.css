@@ -179,9 +179,9 @@ img { max-width: 100%; }
 .team-role b { display: block; font-size: 0.93rem; }
 .team-role span { color: var(--ink-soft); font-size: 0.82rem; }
 
-.pricing-preview { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-.price-card { display: flex; flex-direction: column; min-height: 390px; padding: 26px; border: 1px solid var(--line); border-radius: 20px; background: white; }
-.price-card.featured { position: relative; border: 2px solid var(--teal); box-shadow: var(--shadow); transform: translateY(-8px); }
+.pricing-preview { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; align-items: stretch; }
+.price-card { display: flex; box-sizing: border-box; flex-direction: column; height: 100%; min-height: 390px; padding: 26px; border: 1px solid var(--line); border-radius: 20px; background: white; }
+.price-card.featured { position: relative; border: 2px solid var(--teal); box-shadow: var(--shadow); }
 .price-card .tag { display: inline-block; min-height: 22px; color: var(--teal-deep); font-size: 0.75rem; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
 .price-card h3 { margin: 8px 0 0; font: 800 1.65rem/1 var(--display); letter-spacing: -0.05em; }
 .price { margin: 18px 0 13px; font: 800 2.45rem/1 var(--display); letter-spacing: -0.06em; }
