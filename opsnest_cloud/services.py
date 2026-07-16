@@ -20,11 +20,22 @@ from opsnest_plans import TRIAL_DAYS, effective_plan_code, normalize_plan_code, 
 PAYPAL_WRITE_STATUSES = {"trial", "active"}
 
 
+def is_founder_workspace(workspace: Workspace) -> bool:
+    """Grant the product owner permanent Pro access through server configuration only."""
+    owner_email = str(workspace.owner_email or "").strip().lower()
+    return bool(owner_email and owner_email in settings.founder_workspace_emails)
+
+
 def effective_license(workspace: Workspace, *, now: datetime | None = None) -> dict[str, Any]:
     reference = now or datetime.utcnow()
     status = str(workspace.subscription_status or "verification_pending").lower()
     days_remaining = 0
-    if status == "trial":
+    founder_access = is_founder_workspace(workspace)
+    plan_code = "pro" if founder_access else normalize_plan_code(workspace.plan_code)
+    if founder_access:
+        # This is an internal owner entitlement, not a customer subscription.
+        status = "active"
+    elif status == "trial":
         if not workspace.trial_ends_at or workspace.trial_ends_at <= reference:
             status = "expired"
         else:
@@ -32,11 +43,12 @@ def effective_license(workspace: Workspace, *, now: datetime | None = None) -> d
             days_remaining = max(1, int((seconds + 86_399) // 86_400))
     return {
         "workspace_id": workspace.id,
-        "plan_code": normalize_plan_code(workspace.plan_code),
-        "effective_plan_code": effective_plan_code(status, workspace.plan_code),
-        "plan_name": plan_details(workspace.plan_code)["name"],
+        "plan_code": plan_code,
+        "effective_plan_code": "pro" if founder_access else effective_plan_code(status, plan_code),
+        "plan_name": plan_details(plan_code)["name"],
         "status": status,
-        "can_write": status in PAYPAL_WRITE_STATUSES,
+        "can_write": founder_access or status in PAYPAL_WRITE_STATUSES,
+        "access_source": "founder" if founder_access else "subscription",
         "days_remaining": days_remaining,
         "trial_started_at": workspace.trial_started_at.isoformat() if workspace.trial_started_at else "",
         "trial_ends_at": workspace.trial_ends_at.isoformat() if workspace.trial_ends_at else "",

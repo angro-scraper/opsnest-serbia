@@ -12,7 +12,7 @@ services:
     envVars:
       # The first deploy stays safe until every secret below is configured.
       - key: APP_ENV
-        value: preview
+        value: production
       - key: APP_PUBLIC_URL
         value: https://api.opsnestone.com
       - key: CORS_ORIGINS
@@ -24,7 +24,11 @@ services:
           name: opsnest-cloud-postgres
           property: connectionString
       - key: PAYPAL_MODE
-        value: sandbox
+        value: live
+      # Permanent internal Pro access for the product owner. Keep the exact
+      # owner e-mail(s) only in Render, never in the repository or installer.
+      - key: FOUNDER_WORKSPACE_EMAILS
+        sync: false
       # Set every value marked sync:false only in the Render dashboard.
       - key: PAYPAL_CLIENT_ID
         sync: false

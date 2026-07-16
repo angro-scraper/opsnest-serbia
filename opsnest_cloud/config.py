@@ -16,6 +16,7 @@ class Settings:
     public_url: str
     signing_secret: str
     allowed_origins: tuple[str, ...]
+    founder_workspace_emails: tuple[str, ...]
     paypal_mode: str
     paypal_client_id: str
     paypal_client_secret: str
@@ -39,6 +40,11 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         origins = tuple(value.strip() for value in _value("CORS_ORIGINS").split(",") if value.strip())
+        founder_emails = tuple(
+            value.strip().lower()
+            for value in _value("FOUNDER_WORKSPACE_EMAILS").split(",")
+            if value.strip()
+        )
         database_url = _value("DATABASE_URL", "sqlite:///./opsnest_cloud.db")
         if database_url.startswith("postgres://"):
             database_url = "postgresql+psycopg://" + database_url.removeprefix("postgres://")
@@ -50,6 +56,7 @@ class Settings:
             public_url=_value("APP_PUBLIC_URL", "http://localhost:8000").rstrip("/"),
             signing_secret=_value("APP_SIGNING_SECRET", "development-only-change-me"),
             allowed_origins=origins,
+            founder_workspace_emails=founder_emails,
             paypal_mode=_value("PAYPAL_MODE", "sandbox").lower(),
             paypal_client_id=_value("PAYPAL_CLIENT_ID"),
             paypal_client_secret=_value("PAYPAL_CLIENT_SECRET"),
