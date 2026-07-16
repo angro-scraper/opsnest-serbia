@@ -139,6 +139,8 @@ def request_email_code(
     email = _normalize_email(payload.email)
     if settings.is_production:
         verify_turnstile_token(payload.turnstile_token, request.client.host if request.client else "")
+    if not settings.is_development and (not settings.smtp_host or not settings.smtp_from_email):
+        raise HTTPException(status_code=503, detail="Online activation is not configured yet.")
     existing_email = db.scalar(select(Workspace).where(Workspace.owner_email == email))
     if existing_email and existing_email.id != workspace_id:
         raise HTTPException(status_code=409, detail="This e-mail is already linked to another workspace.")
@@ -171,12 +173,12 @@ def request_email_code(
     try:
         send_verification_email(email, code, workspace.company_name)
     except HTTPException:
-        if settings.is_production:
+        if not settings.is_development:
             db.rollback()
             raise
     db.commit()
     response: dict[str, Any] = {"ok": True, "message": "Verification code sent."}
-    if not settings.is_production and not settings.smtp_host:
+    if settings.is_development and not settings.smtp_host:
         response["development_code"] = code
     return response
 

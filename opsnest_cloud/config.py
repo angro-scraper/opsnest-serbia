@@ -67,6 +67,10 @@ class Settings:
         return self.app_env == "production"
 
     @property
+    def is_development(self) -> bool:
+        return self.app_env == "development"
+
+    @property
     def paypal_api_base(self) -> str:
         return "https://api-m.paypal.com" if self.paypal_mode == "live" else "https://api-m.sandbox.paypal.com"
 
