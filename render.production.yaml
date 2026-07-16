@@ -1,4 +1,12 @@
 services:
+  # Public product website. The root domain stays on the current static host
+  # until its downloads folder contains the signed Windows installer.
+  - type: web
+    name: opsnest-public-site
+    runtime: static
+    staticPublishPath: public_site
+    autoDeployTrigger: commit
+
   - type: web
     name: opsnest-cloud-api
     runtime: python
