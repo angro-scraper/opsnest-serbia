@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 
 def _value(name: str, default: str = "") -> str:
@@ -85,12 +86,19 @@ class Settings:
     def validate_production(self) -> None:
         if not self.is_production:
             return
+        public_url = urlparse(self.public_url)
+        database_is_postgres = self.database_url.startswith("postgresql+psycopg://")
         required = {
+            "DATABASE_URL": self.database_url if database_is_postgres else "",
             "APP_SIGNING_SECRET": self.signing_secret if self.signing_secret != "development-only-change-me" else "",
-            "APP_PUBLIC_URL": self.public_url,
+            "APP_PUBLIC_URL": self.public_url if public_url.scheme == "https" and public_url.netloc else "",
+            "PAYPAL_MODE=live": self.paypal_mode if self.paypal_mode == "live" else "",
             "PAYPAL_CLIENT_ID": self.paypal_client_id,
             "PAYPAL_CLIENT_SECRET": self.paypal_client_secret,
             "PAYPAL_WEBHOOK_ID": self.paypal_webhook_id,
+            "PAYPAL_PLAN_STARTER": self.paypal_plan_starter,
+            "PAYPAL_PLAN_BUSINESS": self.paypal_plan_business,
+            "PAYPAL_PLAN_PRO": self.paypal_plan_pro,
             "SMTP_HOST": self.smtp_host,
             "SMTP_FROM_EMAIL": self.smtp_from_email,
             "TURNSTILE_SITE_KEY": self.turnstile_site_key,
