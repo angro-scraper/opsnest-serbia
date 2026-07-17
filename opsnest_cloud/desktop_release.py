@@ -12,9 +12,9 @@ import re
 
 
 FALLBACK_RELEASE = {
-    "latest_version": "2.8.10",
-    "installer_url": "https://github.com/angro-scraper/opsnest-serbia/releases/download/v2.8.10/OpsNest-Setup-2.8.10.exe",
-    "installer_sha256": "cc1dd6e1ae2c5e9f662e1b16e47224e3dcf42755ac83633064729a47d5d5c1a1",
+    "latest_version": "2.8.14",
+    "installer_url": "https://opsnestone.com/downloads/OpsNest-Setup-2.8.14.exe",
+    "installer_sha256": "273df99870163fa84ded495bd8320341e27ee84b3bb65a10a2f2e34aedcedad7",
 }
 
 
