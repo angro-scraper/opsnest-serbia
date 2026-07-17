@@ -50,6 +50,8 @@ PLAN_CATALOG: dict[str, dict[str, Any]] = {
             "vat_evidence",
             "accountant_export",
             "team_users",
+            "invoice_approval",
+            "custom_invoice_templates",
         },
         "highlights": [
             "Up to 5 team seats",
@@ -58,6 +60,7 @@ PLAN_CATALOG: dict[str, dict[str, Any]] = {
             "250 PDF imports per month",
             "Project budgets, bank statement matching and VAT evidence",
             "Accountant export and priority e-mail support",
+            "Owner approval before issuing and custom invoice templates",
         ],
     },
     "pro": {
@@ -80,12 +83,15 @@ PLAN_CATALOG: dict[str, dict[str, Any]] = {
             "advanced_pdf_import",
             "priority_support",
             "team_users",
+            "invoice_approval",
+            "custom_invoice_templates",
         },
         "highlights": [
             "Up to 20 team seats",
             "Unlimited active projects",
             "Unlimited issued invoices and PDF imports",
             "All Business tools plus advanced PDF processing",
+            "Owner approval and custom invoice templates",
             "Priority support and complete project reporting",
         ],
     },
