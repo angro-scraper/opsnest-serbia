@@ -3,6 +3,9 @@ RewriteEngine On
 # Keep an unambiguous, branded page when a visitor follows an outdated link.
 ErrorDocument 404 /404.html
 RewriteRule ^pricing/?$ pricing.html [L]
+# The original product page exposes this as an on-page section. Keep links
+# from earlier public builds and bookmarks working rather than returning 404.
+RewriteRule ^how-it-works(?:\.html)?/?$ /#how-it-works [R=302,L]
 RewriteRule ^getting-started/?$ getting-started.html [L]
 RewriteRule ^support/?$ support.html [L]
 RewriteRule ^privacy/?$ privacy.html [L]
