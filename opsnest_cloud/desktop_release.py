@@ -22,9 +22,18 @@ def current_desktop_release(version: str, installer_url: str, sha256: str) -> di
     """Prefer complete hosting metadata, otherwise return the signed release manifest."""
     normalized_hash = (sha256 or "").strip().lower()
     normalized_url = (installer_url or "").strip()
-    if normalized_url.startswith("https://") and re.fullmatch(r"[a-f0-9]{64}", normalized_hash):
+    normalized_version = (version or FALLBACK_RELEASE["latest_version"]).strip()
+    expected_filename = f"OpsNest-Setup-{normalized_version}.exe"
+    # A stale environment URL/hash must never be mixed with a newer version.
+    # This can happen while a hosted dashboard applies environment values and
+    # a Git-based deployment at slightly different times.
+    if (
+        normalized_url.startswith("https://")
+        and normalized_url.rsplit("/", 1)[-1] == expected_filename
+        and re.fullmatch(r"[a-f0-9]{64}", normalized_hash)
+    ):
         return {
-            "latest_version": (version or FALLBACK_RELEASE["latest_version"]).strip(),
+            "latest_version": normalized_version,
             "installer_url": normalized_url,
             "installer_sha256": normalized_hash,
         }
