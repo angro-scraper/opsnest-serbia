@@ -12,6 +12,30 @@ from typing import Any
 TRIAL_DAYS = 7
 TRIAL_FEATURE_PLAN = "pro"
 
+# GPT-5.6 Terra standard pricing is $2.50 / 1M input and $15 / 1M output
+# tokens: 1,000 input + 550 output is $0.01075 per review. We reserve $0.015
+# per review to cover drift, then price three optional workspace-wide tiers.
+AI_ADVISOR_ADDONS: dict[str, dict[str, Any]] = {
+    "ai_starter": {
+        "code": "ai_starter", "name": "AI Starter", "price_eur": "4.90", "monthly_requests": 100,
+        "model": "gpt-5.6-terra", "base_plan": "starter",
+    },
+    "ai_business": {
+        "code": "ai_business", "name": "AI Business", "price_eur": "8.90", "monthly_requests": 200,
+        "model": "gpt-5.6-terra", "base_plan": "business",
+    },
+    "ai_pro": {
+        "code": "ai_pro", "name": "AI Pro", "price_eur": "12.90", "monthly_requests": 300,
+        "model": "gpt-5.6-terra", "base_plan": "pro",
+    },
+}
+for _addon in AI_ADVISOR_ADDONS.values():
+    _addon["highlights"] = [
+        f"{_addon['monthly_requests']} aggregate-only financial reviews per workspace each month",
+        f"Designed for the {_addon['base_plan'].title()} package",
+        "No invoices, attachments, customer names or project names are sent",
+    ]
+
 
 PLAN_CATALOG: dict[str, dict[str, Any]] = {
     "starter": {
@@ -121,6 +145,21 @@ def plan_limit(plan_code: object, key: str) -> int | None:
 
 def plan_includes(plan_code: object, feature: str) -> bool:
     return feature in set(plan_details(plan_code).get("features") or set())
+
+
+def ai_advisor_addon_details(code: object) -> dict[str, Any]:
+    """Return a copy so callers cannot alter the product catalog in memory."""
+    normalized = str(code or "").strip().lower()
+    data = AI_ADVISOR_ADDONS.get(normalized)
+    if not data:
+        raise ValueError("Unknown AI Adviser add-on.")
+    result = dict(data)
+    result["highlights"] = list(data["highlights"])
+    return result
+
+
+def ai_advisor_addon_for_base_plan(plan_code: object) -> dict[str, Any]:
+    return ai_advisor_addon_details(f"ai_{normalize_plan_code(plan_code)}")
 
 
 def public_plan_catalog() -> list[dict[str, Any]]:

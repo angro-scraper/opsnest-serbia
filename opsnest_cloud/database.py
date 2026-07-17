@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Iterator
 
-from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint, create_engine
+from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint, create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from .config import settings
@@ -35,6 +35,11 @@ class Workspace(Base):
     subscription_status: Mapped[str] = mapped_column(String(32), default="verification_pending", index=True)
     plan_code: Mapped[str] = mapped_column(String(32), default="starter")
     paypal_subscription_id: Mapped[str] = mapped_column(String(128), unique=True, default="")
+    ai_advisor_status: Mapped[str] = mapped_column(String(32), default="disabled", index=True)
+    ai_advisor_tier: Mapped[str] = mapped_column(String(32), default="")
+    ai_advisor_paypal_subscription_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    ai_advisor_requests_used: Mapped[int] = mapped_column(Integer, default=0)
+    ai_advisor_period_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
     billing_provider: Mapped[str] = mapped_column(String(32), default="")
     last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow)
@@ -146,6 +151,20 @@ class WorkspaceSyncSnapshot(Base):
 
 def create_schema() -> None:
     Base.metadata.create_all(bind=engine)
+    # Existing Render databases predate the AI add-on. Keep this migration
+    # additive and idempotent until the project adopts a migration framework.
+    existing = {column["name"] for column in inspect(engine).get_columns("workspaces")}
+    additions = {
+        "ai_advisor_status": "VARCHAR(32) NOT NULL DEFAULT 'disabled'",
+        "ai_advisor_tier": "VARCHAR(32) NOT NULL DEFAULT ''",
+        "ai_advisor_paypal_subscription_id": "VARCHAR(128) NOT NULL DEFAULT ''",
+        "ai_advisor_requests_used": "INTEGER NOT NULL DEFAULT 0",
+        "ai_advisor_period_started_at": "TIMESTAMP",
+    }
+    with engine.begin() as connection:
+        for name, definition in additions.items():
+            if name not in existing:
+                connection.execute(text(f"ALTER TABLE workspaces ADD COLUMN {name} {definition}"))
 
 
 def get_session() -> Iterator[Session]:

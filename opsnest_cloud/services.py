@@ -14,7 +14,7 @@ from fastapi import HTTPException
 
 from .config import settings
 from .database import Workspace
-from opsnest_plans import TRIAL_DAYS, effective_plan_code, normalize_plan_code, plan_details
+from opsnest_plans import AI_ADVISOR_ADDONS, TRIAL_DAYS, effective_plan_code, normalize_plan_code, plan_details
 
 
 PAYPAL_WRITE_STATUSES = {"trial", "active"}
@@ -41,6 +41,15 @@ def effective_license(workspace: Workspace, *, now: datetime | None = None) -> d
         else:
             seconds = (workspace.trial_ends_at - reference).total_seconds()
             days_remaining = max(1, int((seconds + 86_399) // 86_400))
+    ai_enabled = founder_access or str(workspace.ai_advisor_status or "").lower() == "active"
+    ai_tier_code = "ai_pro" if founder_access else str(workspace.ai_advisor_tier or "").lower()
+    ai_tier = AI_ADVISOR_ADDONS.get(ai_tier_code)
+    ai_enabled = bool(ai_enabled and ai_tier)
+    period_started = workspace.ai_advisor_period_started_at
+    used = max(0, int(workspace.ai_advisor_requests_used or 0)) if ai_enabled else 0
+    if period_started and period_started <= reference - timedelta(days=30):
+        used = 0
+    monthly_limit = int(ai_tier["monthly_requests"]) if ai_tier else 0
     return {
         "workspace_id": workspace.id,
         "plan_code": plan_code,
@@ -53,7 +62,35 @@ def effective_license(workspace: Workspace, *, now: datetime | None = None) -> d
         "trial_started_at": workspace.trial_started_at.isoformat() if workspace.trial_started_at else "",
         "trial_ends_at": workspace.trial_ends_at.isoformat() if workspace.trial_ends_at else "",
         "last_verified_at": workspace.last_verified_at.isoformat() if workspace.last_verified_at else "",
+        "ai_advisor": {
+            "enabled": ai_enabled,
+            "status": "active" if ai_enabled else str(workspace.ai_advisor_status or "disabled").lower(),
+            "tier_code": ai_tier_code,
+            "tier_name": str(ai_tier["name"]) if ai_tier else "",
+            "price_eur": str(ai_tier["price_eur"]) if ai_tier else "",
+            "monthly_requests": monthly_limit,
+            "requests_used": used,
+            "requests_remaining": max(0, monthly_limit - used) if ai_enabled else 0,
+            "period_started_at": period_started.isoformat() if period_started else "",
+        },
     }
+
+
+def consume_ai_advisor_request(workspace: Workspace, *, now: datetime | None = None) -> int:
+    """Consume one included request after a successful response is generated."""
+    reference = now or datetime.utcnow()
+    tier = AI_ADVISOR_ADDONS.get("ai_pro" if is_founder_workspace(workspace) else str(workspace.ai_advisor_tier or "").lower())
+    if not tier or not (is_founder_workspace(workspace) or str(workspace.ai_advisor_status or "").lower() == "active"):
+        raise HTTPException(status_code=403, detail="AI financial adviser requires the AI Adviser add-on.")
+    period_started = workspace.ai_advisor_period_started_at
+    if not period_started or period_started <= reference - timedelta(days=30):
+        workspace.ai_advisor_period_started_at = reference
+        workspace.ai_advisor_requests_used = 0
+    limit = int(tier["monthly_requests"])
+    if int(workspace.ai_advisor_requests_used or 0) >= limit:
+        raise HTTPException(status_code=429, detail="Your AI Adviser monthly limit has been reached. It renews with the next billing period.")
+    workspace.ai_advisor_requests_used = int(workspace.ai_advisor_requests_used or 0) + 1
+    return max(0, limit - int(workspace.ai_advisor_requests_used))
 
 
 def start_trial(workspace: Workspace) -> None:

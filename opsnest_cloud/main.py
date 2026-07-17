@@ -15,7 +15,7 @@ from typing import Annotated, Any
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -55,6 +55,7 @@ from .security import (
     verify_password,
 )
 from .services import (
+    consume_ai_advisor_request,
     effective_license,
     get_paypal_subscription,
     paypal_access_token,
@@ -66,10 +67,13 @@ from .services import (
     verify_paypal_webhook,
     verify_turnstile_token,
 )
-from opsnest_plans import PLAN_CATALOG, TRIAL_DAYS, plan_details, public_plan_catalog
+from opsnest_plans import AI_ADVISOR_ADDONS, PLAN_CATALOG, TRIAL_DAYS, ai_advisor_addon_details, plan_details, public_plan_catalog
 
 
-PLAN_PRICES = {code: f"{data['price_eur']} EUR / month" for code, data in PLAN_CATALOG.items()}
+PLAN_PRICES = {
+    **{code: f"{data['price_eur']} EUR / month" for code, data in PLAN_CATALOG.items()},
+    **{code: f"{data['price_eur']} EUR / month" for code, data in AI_ADVISOR_ADDONS.items()},
+}
 
 
 @asynccontextmanager
@@ -151,6 +155,11 @@ _desktop_activation_lock = Lock()
 _DESKTOP_ACTIVATION_WINDOW = timedelta(minutes=15)
 _DESKTOP_ACTIVATION_LIMIT = 3
 
+_ai_advice_attempts: dict[str, deque[datetime]] = defaultdict(deque)
+_ai_advice_lock = Lock()
+_AI_ADVICE_WINDOW = timedelta(hours=1)
+_AI_ADVICE_LIMIT = 12
+
 
 class RecordPayPalApproval(BaseModel):
     session: str = Field(min_length=20, max_length=2048)
@@ -162,6 +171,25 @@ class DiagnosticReport(BaseModel):
     operating_system: str = Field(default="", max_length=240)
     license_status: str = Field(default="", max_length=64)
     message: str = Field(default="", max_length=800)
+
+
+class FinancialAdviceRequest(BaseModel):
+    """Strictly aggregate-only input for the Pro AI adviser endpoint."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    language: str = Field(default="en", pattern=r"^[a-z]{2}(-[A-Za-z]{2,4})?$")
+    business_profile: str = Field(default="general", pattern=r"^(construction|general)$")
+    currency: str = Field(default="EUR", pattern=r"^[A-Z]{3,8}$")
+    invoice_count: int = Field(ge=0, le=1_000_000)
+    issued_total: float = Field(ge=0, le=1_000_000_000)
+    paid_total: float = Field(ge=0, le=1_000_000_000)
+    outstanding_total: float = Field(ge=0, le=1_000_000_000)
+    overdue_total: float = Field(ge=0, le=1_000_000_000)
+    output_vat_total: float = Field(ge=0, le=1_000_000_000)
+    collection_rate_percent: int = Field(ge=0, le=100)
+    overdue_share_percent: int = Field(ge=0, le=100)
+    top_debtor_share_percent: int = Field(ge=0, le=100)
 
 
 class AdminLogin(BaseModel):
@@ -351,6 +379,58 @@ def _limit_desktop_activation(remote_ip: str) -> None:
         attempts.append(now)
 
 
+def _limit_ai_advice(workspace_id: str) -> None:
+    """Bound model spend per workspace without retaining any financial data."""
+    now = datetime.utcnow()
+    with _ai_advice_lock:
+        attempts = _ai_advice_attempts[workspace_id]
+        cutoff = now - _AI_ADVICE_WINDOW
+        while attempts and attempts[0] <= cutoff:
+            attempts.popleft()
+        if len(attempts) >= _AI_ADVICE_LIMIT:
+            raise HTTPException(
+                status_code=429,
+                detail="AI financial adviser limit reached. Try again in about an hour.",
+            )
+        attempts.append(now)
+
+
+def _generate_ai_financial_advice(payload: FinancialAdviceRequest) -> str:
+    """Call OpenAI from the server only, using an intentionally tiny payload."""
+    if not settings.openai_api_key:
+        raise HTTPException(status_code=503, detail="AI financial adviser is not configured yet.")
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise HTTPException(status_code=503, detail="AI financial adviser is being prepared. Try again shortly.") from exc
+
+    instructions = (
+        "You are the OpsNest Financial Adviser for small and medium businesses. "
+        "Use only the aggregate numeric JSON supplied by the application. "
+        "Return three concise, practical operational priorities in the requested language. "
+        "Do not infer customer identities, invoices, or facts not present in the JSON. "
+        "Do not give tax, legal, lending, investment, or regulatory advice; where relevant, say to confirm with a qualified accountant. "
+        "Do not ask for personal or accounting-document data. "
+        "Use plain text with a short heading and numbered recommendations."
+    )
+    try:
+        response = OpenAI(api_key=settings.openai_api_key).responses.create(
+            model=settings.openai_model,
+            instructions=instructions,
+            input=json.dumps(payload.model_dump(), ensure_ascii=False, separators=(",", ":")),
+            max_output_tokens=550,
+            store=False,
+        )
+        advice = str(getattr(response, "output_text", "") or "").strip()
+    except Exception as exc:
+        # Provider errors may include operational details. Do not return or log
+        # them alongside a workspace's financial request.
+        raise HTTPException(status_code=502, detail="AI financial adviser is temporarily unavailable. Try again later.") from exc
+    if not advice:
+        raise HTTPException(status_code=502, detail="AI financial adviser returned no advice. Try again later.")
+    return advice[:8000]
+
+
 def _get_authenticated_workspace(
     db: Session,
     workspace_id: Annotated[str, Header(alias="X-OpsNest-Workspace")],
@@ -432,7 +512,12 @@ def admin_overview(request: Request, db: Session = Depends(get_session)) -> JSON
 @app.get("/v1/public/plans")
 def public_plans() -> dict[str, Any]:
     """Public, payment-safe catalog for the desktop app and website."""
-    return {"currency": "EUR", "trial_days": TRIAL_DAYS, "plans": public_plan_catalog()}
+    return {
+        "currency": "EUR",
+        "trial_days": TRIAL_DAYS,
+        "plans": public_plan_catalog(),
+        "ai_advisor_addons": [ai_advisor_addon_details(code) for code in AI_ADVISOR_ADDONS],
+    }
 
 
 @app.get("/v1/public/desktop-update")
@@ -570,6 +655,40 @@ def confirm_email_code(payload: ConfirmEmailCode, db: Session = Depends(get_sess
 @app.get("/v1/license")
 def license_status(workspace: Workspace = Depends(_workspace_dependency)) -> dict[str, Any]:
     return effective_license(workspace)
+
+
+@app.post("/v1/ai/financial-advice")
+def ai_financial_advice(
+    payload: FinancialAdviceRequest,
+    workspace: Workspace = Depends(_workspace_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Generate add-on advice from a deliberately aggregate-only snapshot."""
+    license_data = effective_license(workspace)
+    ai_license = dict(license_data.get("ai_advisor") or {})
+    if not bool(ai_license.get("enabled")):
+        raise HTTPException(status_code=403, detail="AI financial adviser requires the AI Adviser add-on.")
+    if int(ai_license.get("requests_remaining") or 0) <= 0:
+        raise HTTPException(status_code=429, detail="Your AI Adviser monthly limit has been reached. It renews with the next billing period.")
+    _limit_ai_advice(workspace.id)
+    advice = _generate_ai_financial_advice(payload)
+    usage_workspace = db.get(Workspace, workspace.id)
+    if not usage_workspace:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    remaining = consume_ai_advisor_request(usage_workspace)
+    _record_audit(
+        db,
+        workspace_id=workspace.id,
+        action="ai_financial_advice_requested",
+        entity_type="ai_financial_advice",
+        details={"model": settings.openai_model, "payload": "aggregate_only"},
+    )
+    db.commit()
+    return {
+        "advice": advice,
+        "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "requests_remaining": remaining,
+    }
 
 
 @app.post("/v1/team/owner-account")
@@ -950,7 +1069,7 @@ def billing_summary(workspace: Workspace = Depends(_workspace_dependency)) -> di
     return {
         **license_data,
         "next_billing_at": next_billing_at,
-        "can_manage_in_paypal": bool(workspace.paypal_subscription_id),
+        "can_manage_in_paypal": bool(workspace.paypal_subscription_id or workspace.ai_advisor_paypal_subscription_id),
         "cancellation_url": "https://www.paypal.com/myaccount/autopay/",
     }
 
@@ -959,11 +1078,12 @@ def billing_summary(workspace: Workspace = Depends(_workspace_dependency)) -> di
 def billing_readiness(workspace: Workspace = Depends(_workspace_dependency)) -> dict[str, Any]:
     """Expose only safe capability flags to an authenticated desktop workspace."""
     plan_configured = {plan: bool(plan_id) for plan, plan_id in settings.paypal_plan_ids.items()}
+    base_plans_configured = all(plan_configured.get(code) for code in PLAN_CATALOG)
     configured = bool(
         settings.paypal_client_id
         and settings.paypal_client_secret
         and settings.paypal_webhook_id
-        and all(plan_configured.values())
+        and base_plans_configured
     )
     credentials_valid = False
     plan_ready = {plan: False for plan in settings.paypal_plan_ids}
@@ -982,7 +1102,8 @@ def billing_readiness(workspace: Workspace = Depends(_workspace_dependency)) -> 
         "mode": settings.paypal_mode,
         "configured": configured,
         "credentials_valid": credentials_valid,
-        "ready": settings.paypal_mode == "live" and configured and credentials_valid and all(plan_ready.values()),
+        "ready": settings.paypal_mode == "live" and configured and credentials_valid and all(plan_ready.get(code) for code in PLAN_CATALOG),
+        "ai_advisor_ready": {code: bool(plan_ready.get(code)) for code in AI_ADVISOR_ADDONS},
         "plans": plan_ready,
     }
 
@@ -996,7 +1117,7 @@ def support_diagnostic(payload: DiagnosticReport, workspace: Workspace = Depends
 @app.post("/v1/billing/checkout-session/{plan_code}")
 def create_checkout_session(plan_code: str, workspace: Workspace = Depends(_workspace_dependency)) -> dict[str, str]:
     plan = plan_code.lower().strip()
-    if plan not in PLAN_CATALOG:
+    if plan not in PLAN_CATALOG and plan not in AI_ADVISOR_ADDONS:
         raise HTTPException(status_code=422, detail="Unknown plan.")
     if not settings.paypal_plan_ids.get(plan) or not settings.paypal_client_id:
         raise HTTPException(status_code=503, detail="PayPal plans are not configured yet.")
@@ -1013,16 +1134,18 @@ def checkout_context(session: str) -> dict[str, Any]:
     plan_id = settings.paypal_plan_ids.get(plan_code)
     if not plan_id or not settings.paypal_client_id:
         raise HTTPException(status_code=503, detail="PayPal plans are not configured yet.")
-    plan = plan_details(plan_code)
+    is_ai_addon = plan_code in AI_ADVISOR_ADDONS
+    item = ai_advisor_addon_details(plan_code) if is_ai_addon else plan_details(plan_code)
     return {
         "workspace_id": str(payload["workspace_id"]),
         "plan_code": plan_code,
         "plan_id": plan_id,
         "client_id": settings.paypal_client_id,
         "price": PLAN_PRICES[plan_code],
-        "plan_name": str(plan["name"]),
-        "seats": int(plan["seats"]),
-        "highlights": list(plan["highlights"]),
+        "plan_name": str(item["name"]),
+        "seats": None if is_ai_addon else int(item["seats"]),
+        "highlights": list(item["highlights"]),
+        "is_addon": is_ai_addon,
     }
 
 
@@ -1038,11 +1161,19 @@ def record_paypal_approval(payload: RecordPayPalApproval, db: Session = Depends(
     workspace = db.get(Workspace, str(checkout["workspace_id"]))
     if not workspace:
         raise HTTPException(status_code=404, detail="Workspace not found.")
-    workspace.paypal_subscription_id = payload.subscription_id
-    workspace.billing_provider = "paypal"
-    workspace.plan_code = str(checkout["plan_code"])
+    is_ai_addon = str(checkout["plan_code"]) in AI_ADVISOR_ADDONS
+    if is_ai_addon:
+        workspace.ai_advisor_paypal_subscription_id = payload.subscription_id
+        workspace.ai_advisor_tier = str(checkout["plan_code"])
+        workspace.ai_advisor_status = "active" if str(paypal_subscription.get("status") or "").upper() == "ACTIVE" else "pending"
+        workspace.ai_advisor_requests_used = 0
+        workspace.ai_advisor_period_started_at = datetime.utcnow()
+    else:
+        workspace.paypal_subscription_id = payload.subscription_id
+        workspace.billing_provider = "paypal"
+        workspace.plan_code = str(checkout["plan_code"])
     workspace.last_verified_at = datetime.utcnow()
-    if str(paypal_subscription.get("status") or "").upper() == "ACTIVE":
+    if not is_ai_addon and str(paypal_subscription.get("status") or "").upper() == "ACTIVE":
         workspace.subscription_status = "active"
     db.commit()
     return {"ok": True, "license": effective_license(workspace)}
@@ -1071,6 +1202,20 @@ async def paypal_webhook(request: Request, db: Session = Depends(get_session)) -
         )
     )
     workspace = db.scalar(select(Workspace).where(Workspace.paypal_subscription_id == subscription_id)) if subscription_id else None
+    ai_workspace = None if workspace else (
+        db.scalar(select(Workspace).where(Workspace.ai_advisor_paypal_subscription_id == subscription_id)) if subscription_id else None
+    )
+    if ai_workspace:
+        if event_type in {"BILLING.SUBSCRIPTION.ACTIVATED", "PAYMENT.SALE.COMPLETED"}:
+            ai_workspace.ai_advisor_status = "active"
+            if event_type == "BILLING.SUBSCRIPTION.ACTIVATED":
+                ai_workspace.ai_advisor_requests_used = 0
+                ai_workspace.ai_advisor_period_started_at = datetime.utcnow()
+        elif event_type in {"BILLING.SUBSCRIPTION.PAYMENT.FAILED", "BILLING.SUBSCRIPTION.SUSPENDED"}:
+            ai_workspace.ai_advisor_status = "past_due"
+        elif event_type in {"BILLING.SUBSCRIPTION.CANCELLED", "BILLING.SUBSCRIPTION.EXPIRED"}:
+            ai_workspace.ai_advisor_status = "cancelled"
+        ai_workspace.last_verified_at = datetime.utcnow()
     if workspace:
         if event_type in {"BILLING.SUBSCRIPTION.ACTIVATED", "PAYMENT.SALE.COMPLETED"}:
             workspace.subscription_status = "active"

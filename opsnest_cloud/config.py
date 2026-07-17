@@ -24,6 +24,9 @@ class Settings:
     paypal_plan_starter: str
     paypal_plan_business: str
     paypal_plan_pro: str
+    paypal_plan_ai_starter: str
+    paypal_plan_ai_business: str
+    paypal_plan_ai_pro: str
     smtp_host: str
     smtp_port: int
     smtp_username: str
@@ -37,6 +40,8 @@ class Settings:
     desktop_installer_sha256: str
     turnstile_site_key: str
     turnstile_secret_key: str
+    openai_api_key: str
+    openai_model: str
     admin_email: str
     admin_password: str
 
@@ -67,6 +72,9 @@ class Settings:
             paypal_plan_starter=_value("PAYPAL_PLAN_STARTER"),
             paypal_plan_business=_value("PAYPAL_PLAN_BUSINESS"),
             paypal_plan_pro=_value("PAYPAL_PLAN_PRO"),
+            paypal_plan_ai_starter=_value("PAYPAL_PLAN_AI_STARTER"),
+            paypal_plan_ai_business=_value("PAYPAL_PLAN_AI_BUSINESS"),
+            paypal_plan_ai_pro=_value("PAYPAL_PLAN_AI_PRO"),
             smtp_host=_value("SMTP_HOST"),
             smtp_port=int(_value("SMTP_PORT", "587") or 587),
             smtp_username=_value("SMTP_USERNAME"),
@@ -80,6 +88,10 @@ class Settings:
             desktop_installer_sha256=_value("DESKTOP_INSTALLER_SHA256").lower(),
             turnstile_site_key=_value("TURNSTILE_SITE_KEY"),
             turnstile_secret_key=_value("TURNSTILE_SECRET_KEY"),
+            # Kept only in the cloud environment; it is never returned to a
+            # desktop client or included in diagnostics/audit records.
+            openai_api_key=_value("OPENAI_API_KEY"),
+            openai_model=_value("OPENAI_MODEL", "gpt-5.6-terra"),
             # The control console is disabled until both values are set only in
             # Render. They are intentionally not part of the installer or repo.
             admin_email=_value("OPSNEST_ADMIN_EMAIL").lower(),
@@ -109,6 +121,9 @@ class Settings:
             "starter": self.paypal_plan_starter,
             "business": self.paypal_plan_business,
             "pro": self.paypal_plan_pro,
+            "ai_starter": self.paypal_plan_ai_starter,
+            "ai_business": self.paypal_plan_ai_business,
+            "ai_pro": self.paypal_plan_ai_pro,
         }
 
     def validate_production(self) -> None:

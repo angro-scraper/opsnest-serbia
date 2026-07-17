@@ -71,6 +71,14 @@ services:
         sync: false
       - key: PAYPAL_PLAN_PRO
         sync: false
+      # Optional AI Adviser tiers: 100 / 200 / 300 reviews per month.
+      # Configure the active PayPal subscription-plan IDs before offering them.
+      - key: PAYPAL_PLAN_AI_STARTER
+        sync: false
+      - key: PAYPAL_PLAN_AI_BUSINESS
+        sync: false
+      - key: PAYPAL_PLAN_AI_PRO
+        sync: false
       - key: SMTP_HOST
         value: mail.opsnestone.com
       - key: SMTP_PORT
@@ -101,6 +109,12 @@ services:
         sync: false
       - key: TURNSTILE_SECRET_KEY
         sync: false
+      # AI is Pro-only. Store the secret in Render; the desktop application
+      # receives only generated advice and never the API key.
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-5.6-terra
       # Private platform-control console at https://api.opsnestone.com/admin.
       # Never put these values in GitHub, the desktop installer or the website.
       - key: OPSNEST_ADMIN_EMAIL
