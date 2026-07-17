@@ -197,6 +197,7 @@ img { max-width: 100%; }
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
+  grid-auto-rows: 1fr;
   align-items: stretch;
 }
 .pricing-preview > .price-card,
@@ -227,7 +228,7 @@ img { max-width: 100%; }
 .price-card ul { flex: 1; margin: 0 0 22px; padding: 0; list-style: none; }
 .price-card li { position: relative; padding: 6px 0 6px 23px; color: #46666d; font-size: .91rem; }
 .price-card li::before { position: absolute; left: 0; color: var(--teal); content: "+"; font-weight: 900; }
-.price-card .button { width: 100%; }
+.price-card .button { width: 100%; margin-top: auto; }
 
 .faq-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
 details { border: 1px solid var(--line); border-radius: 14px; background: white; padding: 18px 20px; }
