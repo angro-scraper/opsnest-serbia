@@ -190,6 +190,11 @@ class FinancialAdviceRequest(BaseModel):
     collection_rate_percent: int = Field(ge=0, le=100)
     overdue_share_percent: int = Field(ge=0, le=100)
     top_debtor_share_percent: int = Field(ge=0, le=100)
+    expense_total: float = Field(default=0, ge=0, le=1_000_000_000)
+    open_payables_total: float = Field(default=0, ge=0, le=1_000_000_000)
+    cash_opening_total: float = Field(default=0, ge=0, le=1_000_000_000)
+    cash_forecast_closing_total: float = Field(default=0, ge=-1_000_000_000, le=1_000_000_000)
+    cash_flow_horizon_days: int = Field(default=30, ge=1, le=365)
 
 
 class AdminLogin(BaseModel):
