@@ -167,15 +167,15 @@ img { max-width: 100%; }
 .product-screens { overflow: hidden; background: linear-gradient(180deg, #fbfcfa 0%, #eff9f6 100%); }
 .showcase-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 22px; }
 .showcase-card { margin: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 20px; background: var(--white); box-shadow: 0 18px 42px rgba(27, 80, 75, .08); }
-.showcase-card a { display: block; overflow: hidden; border-bottom: 1px solid var(--line); background: #e6f1ef; }
-.showcase-card img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; object-position: center top; transition: transform 280ms ease; }
+.showcase-card a { display: block; overflow: hidden; border-bottom: 1px solid var(--line); background: #eef7f4; }
+.showcase-card img { display: block; width: 100%; height: auto; object-fit: contain; transition: transform 280ms ease; }
 .showcase-card:hover img { transform: scale(1.018); }
 .showcase-card figcaption { display: grid; gap: 4px; padding: 17px 20px 19px; }
 .showcase-card figcaption span { color: var(--teal); font-size: .74rem; font-weight: 850; letter-spacing: .09em; text-transform: uppercase; }
 .showcase-card figcaption strong { font: 800 clamp(1.05rem, 2vw, 1.28rem)/1.1 var(--display); letter-spacing: -.035em; }
-.showcase-primary { grid-column: span 7; }
-.showcase-invoices { grid-column: span 5; align-self: end; }
-.showcase-bank { grid-column: 3 / span 8; }
+.showcase-primary { grid-column: 1 / -1; }
+.showcase-dashboard { grid-column: span 6; }
+.showcase-bank { grid-column: span 6; }
 .screen-note { margin: 21px 0 0; color: var(--ink-soft); font-size: .87rem; text-align: center; }
 
 .process-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
@@ -272,7 +272,7 @@ details p { margin: 12px 0 0; color: var(--ink-soft); }
   .product-frame { max-width: 610px; margin: 0 auto; }
   .feature-grid, .pricing-preview { grid-template-columns: 1fr; }
   .showcase-grid { grid-template-columns: 1fr; }
-  .showcase-primary, .showcase-invoices, .showcase-bank { grid-column: auto; }
+  .showcase-primary, .showcase-dashboard, .showcase-bank { grid-column: auto; }
   .price-card.featured { transform: none; }
   .side-card { position: static; }
 }
