@@ -9,4 +9,4 @@ Upload the **contents** of this directory to the document root for `opsnestone.c
 - `/terms`
 - `/cancellation`
 
-All download buttons point to the official GitHub release for `OpsNest-Setup-2.8.10.exe`. Do not upload application source code, SQLite databases, `.env` files, PayPal/Resend secrets, or the original invoice template.
+All download buttons point to the official GitHub release for `OpsNest-Setup-2.8.12.exe`. Do not upload application source code, SQLite databases, `.env` files, PayPal/Resend secrets, or the original invoice template.
