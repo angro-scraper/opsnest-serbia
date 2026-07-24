@@ -98,7 +98,7 @@ services:
         value: support@opsnestone.com
       # Publish the signed Windows setup URL and version before each release.
       - key: DESKTOP_LATEST_VERSION
-        value: 2.9.8
+        value: 2.9.9
       - key: DESKTOP_INSTALLER_URL
         sync: false
       # Publish the SHA-256 for the same installer URL. The desktop client
