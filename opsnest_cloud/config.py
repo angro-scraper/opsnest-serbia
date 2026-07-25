@@ -44,6 +44,11 @@ class Settings:
     openai_model: str
     admin_email: str
     admin_password: str
+    document_storage_endpoint: str
+    document_storage_region: str
+    document_storage_bucket: str
+    document_storage_access_key: str
+    document_storage_secret_key: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -96,6 +101,14 @@ class Settings:
             # Render. They are intentionally not part of the installer or repo.
             admin_email=_value("OPSNEST_ADMIN_EMAIL").lower(),
             admin_password=_value("OPSNEST_ADMIN_PASSWORD"),
+            # Any private, EU-hosted S3-compatible bucket may be used. These
+            # values are intentionally optional until the Document Inbox is
+            # explicitly enabled in Render.
+            document_storage_endpoint=_value("DOCUMENT_STORAGE_ENDPOINT"),
+            document_storage_region=_value("DOCUMENT_STORAGE_REGION", "eu-central-1"),
+            document_storage_bucket=_value("DOCUMENT_STORAGE_BUCKET"),
+            document_storage_access_key=_value("DOCUMENT_STORAGE_ACCESS_KEY"),
+            document_storage_secret_key=_value("DOCUMENT_STORAGE_SECRET_KEY"),
         )
 
     @property
@@ -110,6 +123,15 @@ class Settings:
     def admin_enabled(self) -> bool:
         """Keep the private control console unreachable until explicitly configured."""
         return bool(self.admin_email and self.admin_password and self.signing_secret != "development-only-change-me")
+
+    @property
+    def document_storage_enabled(self) -> bool:
+        return bool(
+            self.document_storage_endpoint
+            and self.document_storage_bucket
+            and self.document_storage_access_key
+            and self.document_storage_secret_key
+        )
 
     @property
     def paypal_api_base(self) -> str:

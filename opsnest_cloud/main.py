@@ -13,7 +13,7 @@ from threading import Lock
 from html import escape
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -33,6 +33,13 @@ from .admin_console import (
     verify_admin_credentials,
 )
 from .desktop_release import current_desktop_release
+from .document_storage import (
+    MAX_DOCUMENT_BYTES,
+    document_storage_status,
+    put_private_document,
+    safe_filename,
+    signed_document_download,
+)
 from .workspace_portal import workspace_portal_html
 from .database import (
     EmailChallenge,
@@ -42,6 +49,7 @@ from .database import (
     TeamInvitation,
     Workspace,
     WorkspaceAuditEvent,
+    WorkspaceDocument,
     WorkspaceMember,
     WorkspaceSyncSnapshot,
     WorkflowComment,
@@ -94,7 +102,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.allowed_origins) or [settings.public_url],
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PATCH"],
     allow_headers=["Authorization", "Content-Type", "X-OpsNest-Workspace", "X-OpsNest-Client", "X-OpsNest-Member"],
 )
 
@@ -113,6 +121,7 @@ WORKFLOW_TYPES = {"document", "payment", "vat", "review", "other"}
 WORKFLOW_STATUSES = {"open", "in_progress", "waiting", "done"}
 WORKFLOW_PRIORITIES = {"low", "normal", "high", "urgent"}
 WORKFLOW_MANAGER_ROLES = {"owner", "administrator", "project_manager", "accountant"}
+DOCUMENT_TYPES = {"invoice", "receipt", "contract", "statement", "other"}
 COUNTRY_PACKS = {
     "RS": {"label": "Serbia", "currency": "RSD", "stage": "SEF and VAT workspace"},
     "BG": {"label": "Bulgaria", "currency": "BGN", "stage": "VAT and e-invoice workspace"},
@@ -350,6 +359,22 @@ def _serialize_workflow_item(db: Session, item: WorkflowItem) -> dict[str, Any]:
     }
 
 
+def _serialize_workspace_document(db: Session, document: WorkspaceDocument) -> dict[str, Any]:
+    uploader = _active_workspace_member(db, document.workspace_id, document.uploaded_by_member_id)
+    return {
+        "id": document.id,
+        "workflow_item_id": document.workflow_item_id,
+        "uploaded_by_member_id": document.uploaded_by_member_id,
+        "uploaded_by_name": uploader.display_name if uploader else "Former member",
+        "document_type": document.document_type,
+        "original_filename": document.original_filename,
+        "content_type": document.content_type,
+        "byte_size": document.byte_size,
+        "sha256": document.sha256,
+        "created_at": document.created_at.isoformat(timespec="seconds"),
+    }
+
+
 def _serialize_member(member: WorkspaceMember) -> dict[str, Any]:
     return {
         "id": member.id,
@@ -400,7 +425,12 @@ def _workspace_overview(db: Session, context: MemberContext) -> dict[str, Any]:
         "modules": [
             {"key": "projects", "title": "Projects and contracts", "state": "desktop", "detail": "Operational project records stay available in OpsNest Desktop."},
             {"key": "workflow", "title": "Operational work queue", "state": "ready", "detail": "Assign document checks, payments, VAT controls and reviews with comments and deadlines."},
-            {"key": "documents", "title": "Documents and approvals", "state": "foundation", "detail": "Cloud document workflow is the next platform module."},
+            {
+                "key": "documents",
+                "title": "Document Inbox",
+                "state": "ready" if bool(document_storage_status()["enabled"]) else "configuration_required",
+                "detail": "Private PDF/image intake is ready after the EU document-storage bucket is configured.",
+            },
             {"key": "money", "title": "Money and cash-flow", "state": "desktop", "detail": "Bank, cash and forecasts remain in the controlled desktop workspace."},
             {"key": "accountant", "title": "Accountant collaboration", "state": "ready" if can_manage else "member", "detail": "Team roles, access control and audit are active."},
         ],
@@ -1447,6 +1477,115 @@ def add_workflow_comment(
     )
     db.commit()
     return {"ok": True, "comment_id": comment.id}
+
+
+def _valid_document_signature(content_type: str, content: bytes) -> bool:
+    return (
+        (content_type == "application/pdf" and content.startswith(b"%PDF-"))
+        or (content_type == "image/jpeg" and content.startswith(b"\xff\xd8\xff"))
+        or (content_type == "image/png" and content.startswith(b"\x89PNG\r\n\x1a\n"))
+    )
+
+
+@app.get("/v1/documents/status")
+def documents_status(context: MemberContext = Depends(_member_dependency)) -> dict[str, object]:
+    """Safe capability status; does not reveal bucket credentials or configuration."""
+    return document_storage_status()
+
+
+@app.get("/v1/documents")
+def list_workspace_documents(
+    context: MemberContext = Depends(_member_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    documents = db.scalars(
+        select(WorkspaceDocument)
+        .where(WorkspaceDocument.workspace_id == context.workspace.id)
+        .order_by(WorkspaceDocument.created_at.desc())
+        .limit(200)
+    ).all()
+    return {
+        "storage": document_storage_status(),
+        "documents": [_serialize_workspace_document(db, document) for document in documents],
+    }
+
+
+@app.post("/v1/documents")
+async def upload_workspace_document(
+    file: UploadFile = File(...),
+    document_type: str = Form(default="other"),
+    workflow_item_id: str = Form(default=""),
+    context: MemberContext = Depends(_member_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Store an allowed PDF/image in private object storage and keep only metadata in SQL."""
+    content_type = str(file.content_type or "").lower().strip()
+    original_filename = safe_filename(file.filename or "document")
+    content = await file.read(MAX_DOCUMENT_BYTES + 1)
+    if len(content) > MAX_DOCUMENT_BYTES:
+        raise HTTPException(status_code=413, detail="Document is larger than the 15 MB upload limit.")
+    if not _valid_document_signature(content_type, content):
+        raise HTTPException(status_code=415, detail="The uploaded file does not match an allowed PDF, JPEG or PNG format.")
+    workflow_id = str(workflow_item_id or "").strip()
+    if workflow_id and not db.scalar(
+        select(WorkflowItem).where(WorkflowItem.id == workflow_id, WorkflowItem.workspace_id == context.workspace.id)
+    ):
+        raise HTTPException(status_code=422, detail="Choose a work item from this workspace.")
+    document_id = str(uuid.uuid4())
+    digest = hashlib.sha256(content).hexdigest()
+    storage_key = f"workspaces/{context.workspace.id}/documents/{document_id}/{digest[:16]}-{original_filename}"
+    normalized_type = _normalize_workflow_option(document_type, DOCUMENT_TYPES, "document type")
+    put_private_document(storage_key=storage_key, content=content, content_type=content_type)
+    document = WorkspaceDocument(
+        id=document_id,
+        workspace_id=context.workspace.id,
+        workflow_item_id=workflow_id,
+        uploaded_by_member_id=context.member.id,
+        document_type=normalized_type,
+        original_filename=original_filename,
+        content_type=content_type,
+        byte_size=len(content),
+        sha256=digest,
+        storage_key=storage_key,
+    )
+    db.add(document)
+    _record_audit(
+        db,
+        workspace_id=context.workspace.id,
+        actor_member_id=context.member.id,
+        action="document.uploaded",
+        entity_type="workspace_document",
+        entity_id=document.id,
+        details={"document_type": document.document_type, "byte_size": document.byte_size, "workflow_linked": bool(workflow_id)},
+    )
+    db.commit()
+    return {"document": _serialize_workspace_document(db, document)}
+
+
+@app.get("/v1/documents/{document_id}/download")
+def download_workspace_document(
+    document_id: str,
+    context: MemberContext = Depends(_member_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, str | int]:
+    document = db.scalar(
+        select(WorkspaceDocument).where(
+            WorkspaceDocument.id == document_id,
+            WorkspaceDocument.workspace_id == context.workspace.id,
+        )
+    )
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    _record_audit(
+        db,
+        workspace_id=context.workspace.id,
+        actor_member_id=context.member.id,
+        action="document.download_link_created",
+        entity_type="workspace_document",
+        entity_id=document.id,
+    )
+    db.commit()
+    return {"url": signed_document_download(storage_key=document.storage_key, filename=document.original_filename), "expires_in_seconds": 300}
 
 
 @app.get("/v1/team/sync")

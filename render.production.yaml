@@ -121,6 +121,19 @@ services:
         sync: false
       - key: OPSNEST_ADMIN_PASSWORD
         sync: false
+      # Document Inbox stays disabled until a private EU S3-compatible bucket
+      # and its retention policy are explicitly chosen. Never store these
+      # credentials in GitHub or the desktop application.
+      - key: DOCUMENT_STORAGE_ENDPOINT
+        sync: false
+      - key: DOCUMENT_STORAGE_REGION
+        value: eu-central-1
+      - key: DOCUMENT_STORAGE_BUCKET
+        sync: false
+      - key: DOCUMENT_STORAGE_ACCESS_KEY
+        sync: false
+      - key: DOCUMENT_STORAGE_SECRET_KEY
+        sync: false
 
 databases:
   - name: opsnest-cloud-postgres

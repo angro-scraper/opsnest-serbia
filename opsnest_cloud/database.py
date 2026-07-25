@@ -190,6 +190,24 @@ class WorkflowComment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow, index=True)
 
 
+class WorkspaceDocument(Base):
+    """Metadata for a private object-storage file; no file body is stored in SQL."""
+
+    __tablename__ = "workspace_documents"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(36), index=True)
+    workflow_item_id: Mapped[str] = mapped_column(String(36), default="", index=True)
+    uploaded_by_member_id: Mapped[str] = mapped_column(String(36), index=True)
+    document_type: Mapped[str] = mapped_column(String(32), default="other", index=True)
+    original_filename: Mapped[str] = mapped_column(String(240))
+    content_type: Mapped[str] = mapped_column(String(120))
+    byte_size: Mapped[int] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(String(64), index=True)
+    storage_key: Mapped[str] = mapped_column(String(512), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow, index=True)
+
+
 class WorkspaceSyncSnapshot(Base):
     """Versioned encrypted-in-transit workspace data supplied by the desktop app."""
 

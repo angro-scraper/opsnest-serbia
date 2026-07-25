@@ -96,6 +96,21 @@ portal. It records the time, action and responsible team account for relevant
 workspace, team, password-recovery, sync and workflow events, while keeping
 passwords, invoice bodies, files and payment credentials out of the audit view.
 
+## Document Inbox storage
+
+The authenticated portal contains a Document Inbox for PDFs, JPEGs and PNGs.
+It accepts a maximum 15 MB file, checks the file signature and SHA-256 digest,
+stores only metadata in Postgres, encrypts the object in a private
+S3-compatible bucket, and creates download links that expire after five
+minutes. No storage is enabled by default.
+
+Before enabling uploads, choose an EU-hosted private bucket and configure only
+in Render: `DOCUMENT_STORAGE_ENDPOINT`, `DOCUMENT_STORAGE_REGION`,
+`DOCUMENT_STORAGE_BUCKET`, `DOCUMENT_STORAGE_ACCESS_KEY` and
+`DOCUMENT_STORAGE_SECRET_KEY`. Use a restricted service credential for this
+bucket only. Define retention, backup and deletion rules with the accountant
+and local legal adviser before uploading real accounting documents.
+
 Render Free blocks outbound SMTP ports. Verify `opsnestone.com` in Resend, then set `RESEND_API_KEY` in the Render dashboard. OpsNest uses `support@opsnestone.com` as the sender and automatically prefers Resend when this key is configured.
 
 ## Local development
