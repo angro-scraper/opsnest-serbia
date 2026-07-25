@@ -208,6 +208,24 @@ class WorkspaceDocument(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow, index=True)
 
 
+class WorkspaceFinancialOverview(Base):
+    """Small aggregate-only finance snapshot for the web command center.
+
+    This table deliberately never stores invoice, vendor, customer, project,
+    bank-transaction or attachment rows.  It contains only the numeric totals
+    the desktop owner explicitly chooses to synchronize.
+    """
+
+    __tablename__ = "workspace_financial_overviews"
+
+    workspace_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    currency: Mapped[str] = mapped_column(String(8), default="EUR")
+    horizon_days: Mapped[int] = mapped_column(Integer, default=90)
+    summary_json: Mapped[str] = mapped_column(Text, default="{}")
+    updated_by_member_id: Mapped[str] = mapped_column(String(36), default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class WorkspaceSyncSnapshot(Base):
     """Versioned encrypted-in-transit workspace data supplied by the desktop app."""
 

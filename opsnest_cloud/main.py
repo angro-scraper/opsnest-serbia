@@ -50,6 +50,7 @@ from .database import (
     Workspace,
     WorkspaceAuditEvent,
     WorkspaceDocument,
+    WorkspaceFinancialOverview,
     WorkspaceMember,
     WorkspaceSyncSnapshot,
     WorkflowComment,
@@ -208,6 +209,26 @@ class WorkspaceProfileUpdate(BaseModel):
     country_code: str = Field(default="INTL", min_length=2, max_length=8)
     default_currency: str = Field(default="EUR", min_length=3, max_length=8)
     business_profile: str = Field(default="general", pattern=r"^(construction|general|services|trade)$")
+
+
+class FinancialOverviewUpload(BaseModel):
+    """A privacy-minimal Desktop → web summary; no accounting rows allowed."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    currency: str = Field(default="EUR", pattern=r"^[A-Z]{3,8}$")
+    horizon_days: int = Field(default=90, ge=7, le=365)
+    income_net: float = Field(default=0, ge=0, le=1_000_000_000)
+    expense_net: float = Field(default=0, ge=0, le=1_000_000_000)
+    profit_net: float = Field(default=0, ge=-1_000_000_000, le=1_000_000_000)
+    vat_payable: float = Field(default=0, ge=-1_000_000_000, le=1_000_000_000)
+    open_receivables: float = Field(default=0, ge=0, le=1_000_000_000)
+    overdue_receivables: float = Field(default=0, ge=0, le=1_000_000_000)
+    open_payables: float = Field(default=0, ge=0, le=1_000_000_000)
+    opening_cash: float = Field(default=0, ge=-1_000_000_000, le=1_000_000_000)
+    forecast_inflows: float = Field(default=0, ge=0, le=1_000_000_000)
+    forecast_outflows: float = Field(default=0, ge=0, le=1_000_000_000)
+    forecast_closing: float = Field(default=0, ge=-1_000_000_000, le=1_000_000_000)
 
 
 class UploadSyncSnapshot(BaseModel):
@@ -1314,6 +1335,58 @@ def update_workspace_profile(
     )
     db.commit()
     return _workspace_overview(db, context)
+
+
+@app.get("/v1/workspace/financial-overview")
+def get_workspace_financial_overview(
+    context: MemberContext = Depends(_member_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Read the optional aggregate-only finance summary for this workspace."""
+    overview = db.get(WorkspaceFinancialOverview, context.workspace.id)
+    if not overview:
+        return {"summary": None, "message": "No Desktop financial summary has been synchronized yet."}
+    try:
+        summary = json.loads(overview.summary_json or "{}")
+    except json.JSONDecodeError:
+        summary = {}
+    return {
+        "summary": summary,
+        "currency": overview.currency,
+        "horizon_days": overview.horizon_days,
+        "updated_at": overview.updated_at.isoformat(timespec="seconds") if overview.updated_at else "",
+        "updated_by_member_id": overview.updated_by_member_id,
+    }
+
+
+@app.post("/v1/workspace/financial-overview")
+def upload_workspace_financial_overview(
+    payload: FinancialOverviewUpload,
+    context: MemberContext = Depends(_member_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Store explicit company-level totals; never rows, people or documents."""
+    _require_team_role(context, *WORKFLOW_MANAGER_ROLES)
+    summary = payload.model_dump()
+    overview = db.get(WorkspaceFinancialOverview, context.workspace.id)
+    if overview is None:
+        overview = WorkspaceFinancialOverview(workspace_id=context.workspace.id)
+        db.add(overview)
+    overview.currency = _normalize_currency_code(payload.currency)
+    overview.horizon_days = int(payload.horizon_days)
+    overview.summary_json = json.dumps(summary, separators=(",", ":"), sort_keys=True)
+    overview.updated_by_member_id = context.member.id
+    _record_audit(
+        db,
+        workspace_id=context.workspace.id,
+        actor_member_id=context.member.id,
+        action="workspace.financial_overview_synchronized",
+        entity_type="financial_overview",
+        entity_id=context.workspace.id,
+        details={"currency": overview.currency, "horizon_days": overview.horizon_days},
+    )
+    db.commit()
+    return {"ok": True, "currency": overview.currency, "horizon_days": overview.horizon_days}
 
 
 @app.get("/v1/workflow-items")
