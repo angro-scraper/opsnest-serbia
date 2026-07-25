@@ -79,6 +79,11 @@ desktop database. Invoices, financial records, attachments and accounting
 snapshots are not rendered in the portal until a dedicated country-specific
 cloud module is built and reviewed.
 
+The portal also provides password recovery for an active team account. A
+six-digit recovery code is sent only to the member's registered business
+e-mail, expires after 15 minutes, accepts at most five attempts and revokes
+all existing member sessions when a new password is confirmed.
+
 Render Free blocks outbound SMTP ports. Verify `opsnestone.com` in Resend, then set `RESEND_API_KEY` in the Render dashboard. OpsNest uses `support@opsnestone.com` as the sender and automatically prefers Resend when this key is configured.
 
 ## Local development

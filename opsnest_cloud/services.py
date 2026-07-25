@@ -164,6 +164,36 @@ def send_team_invitation(*, email: str, company_name: str, role: str, code: str)
         raise HTTPException(status_code=502, detail="Team invitation e-mail could not be sent.") from exc
 
 
+def send_team_password_reset(*, email: str, company_name: str, code: str) -> None:
+    """Send a recovery code without ever sending or logging a password."""
+    if not settings.smtp_from_email:
+        raise HTTPException(status_code=503, detail="Password reset e-mail is not configured yet.")
+    subject = f"Reset your OpsNest password for {company_name}"
+    body = (
+        f"Your OpsNest password reset code is: {code}\n\n"
+        f"Workspace: {company_name}\n"
+        "The code expires in 15 minutes and can only be used once. If you did not request this, you can ignore this e-mail."
+    )
+    if settings.resend_api_key:
+        _send_resend_email(email, subject, body)
+        return
+    if not settings.smtp_host:
+        raise HTTPException(status_code=503, detail="Password reset e-mail is not configured yet.")
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
+    message["To"] = email
+    message.set_content(body)
+    try:
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=20) as client:
+            client.starttls()
+            if settings.smtp_username:
+                client.login(settings.smtp_username, settings.smtp_password)
+            client.send_message(message)
+    except (OSError, smtplib.SMTPException) as exc:
+        raise HTTPException(status_code=502, detail="Password reset e-mail could not be sent.") from exc
+
+
 def send_support_diagnostic(*, workspace: Workspace, diagnostic: dict[str, Any]) -> None:
     """Deliver a deliberately small, non-accounting support report to OpsNest."""
     if not settings.support_email or not settings.smtp_from_email:

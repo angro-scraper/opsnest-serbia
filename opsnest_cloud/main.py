@@ -38,6 +38,7 @@ from .database import (
     EmailChallenge,
     MemberSession,
     PayPalWebhookEvent,
+    PasswordResetChallenge,
     TeamInvitation,
     Workspace,
     WorkspaceAuditEvent,
@@ -63,6 +64,7 @@ from .services import (
     paypal_access_token,
     send_team_invitation,
     send_support_diagnostic,
+    send_team_password_reset,
     send_verification_email,
     start_trial,
     verify_paypal_plan_ids,
@@ -154,6 +156,18 @@ class TeamLogin(BaseModel):
     email: str = Field(min_length=5, max_length=320)
     password: str = Field(min_length=10, max_length=256)
     device_name: str = Field(default="OpsNest Desktop", max_length=160)
+
+
+class PasswordResetRequest(BaseModel):
+    workspace_id: str = Field(min_length=36, max_length=36)
+    email: str = Field(min_length=5, max_length=320)
+
+
+class PasswordResetConfirm(BaseModel):
+    workspace_id: str = Field(min_length=36, max_length=36)
+    email: str = Field(min_length=5, max_length=320)
+    code: str = Field(min_length=6, max_length=6)
+    password: str = Field(min_length=10, max_length=256)
 
 
 class WorkspaceProfileUpdate(BaseModel):
@@ -1033,6 +1047,109 @@ def team_login(payload: TeamLogin, db: Session = Depends(get_session)) -> dict[s
         "member": _serialize_member(member),
         **response,
     }
+
+
+@app.post("/v1/team/password-reset/request")
+def request_team_password_reset(
+    payload: PasswordResetRequest,
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Deliver a short-lived recovery code without revealing whether an account exists."""
+    workspace_id = _validate_workspace_id(payload.workspace_id)
+    email = _normalize_email(payload.email)
+    workspace = db.get(Workspace, workspace_id)
+    member = db.scalar(
+        select(WorkspaceMember).where(
+            WorkspaceMember.workspace_id == workspace_id,
+            WorkspaceMember.email == email,
+            WorkspaceMember.status == "active",
+        )
+    )
+    response: dict[str, Any] = {
+        "ok": True,
+        "message": "If this e-mail belongs to an active OpsNest team account, a recovery code has been sent.",
+    }
+    if not workspace or not member:
+        return response
+    latest = db.scalar(
+        select(PasswordResetChallenge)
+        .where(PasswordResetChallenge.workspace_id == workspace_id, PasswordResetChallenge.email == email)
+        .order_by(PasswordResetChallenge.created_at.desc())
+    )
+    if latest and latest.created_at > datetime.utcnow() - timedelta(seconds=60):
+        raise HTTPException(status_code=429, detail="Wait one minute before requesting another recovery code.")
+    code = new_email_code()
+    challenge = PasswordResetChallenge(
+        id=uuid.uuid4().hex,
+        workspace_id=workspace_id,
+        member_id=member.id,
+        email=email,
+        code_hash=secret_hash(code),
+        expires_at=datetime.utcnow() + timedelta(minutes=15),
+    )
+    db.add(challenge)
+    try:
+        send_team_password_reset(email=email, company_name=workspace.company_name, code=code)
+    except HTTPException:
+        if not settings.is_development:
+            db.rollback()
+            raise
+    db.commit()
+    if settings.is_development and not settings.smtp_host:
+        response["development_code"] = code
+    return response
+
+
+@app.post("/v1/team/password-reset/confirm")
+def confirm_team_password_reset(
+    payload: PasswordResetConfirm,
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Replace one member password and revoke every old session for that account."""
+    workspace_id = _validate_workspace_id(payload.workspace_id)
+    email = _normalize_email(payload.email)
+    challenge = db.scalar(
+        select(PasswordResetChallenge)
+        .where(
+            PasswordResetChallenge.workspace_id == workspace_id,
+            PasswordResetChallenge.email == email,
+            PasswordResetChallenge.used_at.is_(None),
+        )
+        .order_by(PasswordResetChallenge.created_at.desc())
+    )
+    if not challenge or challenge.expires_at <= datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Recovery code expired. Request a new code.")
+    if challenge.attempts >= 5:
+        raise HTTPException(status_code=429, detail="Too many attempts. Request a new recovery code.")
+    challenge.attempts += 1
+    if secret_hash(payload.code) != challenge.code_hash:
+        db.commit()
+        raise HTTPException(status_code=400, detail="Recovery code is not correct.")
+    member = db.get(WorkspaceMember, challenge.member_id)
+    workspace = db.get(Workspace, workspace_id)
+    if not workspace or not member or member.workspace_id != workspace_id or member.status != "active":
+        raise HTTPException(status_code=400, detail="This account can no longer reset its password.")
+    challenge.used_at = datetime.utcnow()
+    member.password_hash = password_hash(payload.password)
+    active_sessions = db.scalars(
+        select(MemberSession).where(
+            MemberSession.workspace_id == workspace_id,
+            MemberSession.member_id == member.id,
+            MemberSession.revoked_at.is_(None),
+        )
+    ).all()
+    for session in active_sessions:
+        session.revoked_at = datetime.utcnow()
+    _record_audit(
+        db,
+        workspace_id=workspace_id,
+        actor_member_id=member.id,
+        action="team.password_reset",
+        entity_type="member",
+        entity_id=member.id,
+    )
+    db.commit()
+    return {"ok": True, "message": "Password changed. Sign in with the new password."}
 
 
 @app.get("/v1/team/me")
