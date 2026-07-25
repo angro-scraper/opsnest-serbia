@@ -84,6 +84,13 @@ six-digit recovery code is sent only to the member's registered business
 e-mail, expires after 15 minutes, accepts at most five attempts and revokes
 all existing member sessions when a new password is confirmed.
 
+The portal includes an operational work queue for document checks, payment
+preparation, VAT controls and review tasks. Owners, administrators, project
+managers and accountants can create, assign, return or close items; all active
+team members can add operational comments. The queue keeps only task metadata,
+deadlines and comments, never invoice files, payment credentials or accounting
+snapshots.
+
 Render Free blocks outbound SMTP ports. Verify `opsnestone.com` in Resend, then set `RESEND_API_KEY` in the Render dashboard. OpsNest uses `support@opsnestone.com` as the sender and automatically prefers Resend when this key is configured.
 
 ## Local development

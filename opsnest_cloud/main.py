@@ -17,7 +17,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .config import settings
@@ -44,6 +44,8 @@ from .database import (
     WorkspaceAuditEvent,
     WorkspaceMember,
     WorkspaceSyncSnapshot,
+    WorkflowComment,
+    WorkflowItem,
     create_schema,
     get_session,
 )
@@ -107,6 +109,10 @@ TEAM_ROLE_LABELS = {
 }
 TEAM_SESSION_DAYS = 30
 TEAM_INVITATION_HOURS = 48
+WORKFLOW_TYPES = {"document", "payment", "vat", "review", "other"}
+WORKFLOW_STATUSES = {"open", "in_progress", "waiting", "done"}
+WORKFLOW_PRIORITIES = {"low", "normal", "high", "urgent"}
+WORKFLOW_MANAGER_ROLES = {"owner", "administrator", "project_manager", "accountant"}
 COUNTRY_PACKS = {
     "RS": {"label": "Serbia", "currency": "RSD", "stage": "SEF and VAT workspace"},
     "BG": {"label": "Bulgaria", "currency": "BGN", "stage": "VAT and e-invoice workspace"},
@@ -168,6 +174,25 @@ class PasswordResetConfirm(BaseModel):
     email: str = Field(min_length=5, max_length=320)
     code: str = Field(min_length=6, max_length=6)
     password: str = Field(min_length=10, max_length=256)
+
+
+class WorkflowItemCreate(BaseModel):
+    title: str = Field(min_length=2, max_length=240)
+    workflow_type: str = Field(default="document", max_length=32)
+    priority: str = Field(default="normal", max_length=16)
+    due_date: str = Field(default="", max_length=10)
+    assigned_member_id: str = Field(default="", max_length=36)
+
+
+class WorkflowItemUpdate(BaseModel):
+    status: str = Field(default="open", max_length=32)
+    priority: str = Field(default="normal", max_length=16)
+    due_date: str = Field(default="", max_length=10)
+    assigned_member_id: str = Field(default="", max_length=36)
+
+
+class WorkflowCommentCreate(BaseModel):
+    body: str = Field(min_length=1, max_length=2_000)
 
 
 class WorkspaceProfileUpdate(BaseModel):
@@ -271,6 +296,60 @@ def _normalize_currency_code(value: str) -> str:
     return currency
 
 
+def _normalize_workflow_option(value: str, allowed: set[str], label: str) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in allowed:
+        raise HTTPException(status_code=422, detail=f"Enter a valid {label}.")
+    return normalized
+
+
+def _normalize_workflow_due_date(value: str) -> str:
+    due_date = str(value or "").strip()
+    if not due_date:
+        return ""
+    try:
+        return datetime.strptime(due_date, "%Y-%m-%d").date().isoformat()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Enter the due date as YYYY-MM-DD.") from exc
+
+
+def _active_workspace_member(db: Session, workspace_id: str, member_id: str) -> WorkspaceMember | None:
+    normalized_id = str(member_id or "").strip()
+    if not normalized_id:
+        return None
+    return db.scalar(
+        select(WorkspaceMember).where(
+            WorkspaceMember.id == normalized_id,
+            WorkspaceMember.workspace_id == workspace_id,
+            WorkspaceMember.status == "active",
+        )
+    )
+
+
+def _serialize_workflow_item(db: Session, item: WorkflowItem) -> dict[str, Any]:
+    assignee = _active_workspace_member(db, item.workspace_id, item.assigned_member_id)
+    creator = _active_workspace_member(db, item.workspace_id, item.created_by_member_id)
+    comment_count = db.scalar(
+        select(func.count()).select_from(WorkflowComment).where(WorkflowComment.workflow_item_id == item.id)
+    ) or 0
+    return {
+        "id": item.id,
+        "title": item.title,
+        "workflow_type": item.workflow_type,
+        "status": item.status,
+        "priority": item.priority,
+        "due_date": item.due_date,
+        "assigned_member_id": item.assigned_member_id,
+        "assigned_member_name": assignee.display_name if assignee else "Unassigned",
+        "created_by_member_id": item.created_by_member_id,
+        "created_by_member_name": creator.display_name if creator else "",
+        "comment_count": int(comment_count),
+        "created_at": item.created_at.isoformat(timespec="seconds"),
+        "updated_at": item.updated_at.isoformat(timespec="seconds"),
+        "closed_at": item.closed_at.isoformat(timespec="seconds") if item.closed_at else "",
+    }
+
+
 def _serialize_member(member: WorkspaceMember) -> dict[str, Any]:
     return {
         "id": member.id,
@@ -320,6 +399,7 @@ def _workspace_overview(db: Session, context: MemberContext) -> dict[str, Any]:
         "sync": {"revision": sync_revision, "last_sync_at": last_sync, "enabled": bool(sync_revision)},
         "modules": [
             {"key": "projects", "title": "Projects and contracts", "state": "desktop", "detail": "Operational project records stay available in OpsNest Desktop."},
+            {"key": "workflow", "title": "Operational work queue", "state": "ready", "detail": "Assign document checks, payments, VAT controls and reviews with comments and deadlines."},
             {"key": "documents", "title": "Documents and approvals", "state": "foundation", "detail": "Cloud document workflow is the next platform module."},
             {"key": "money", "title": "Money and cash-flow", "state": "desktop", "detail": "Bank, cash and forecasts remain in the controlled desktop workspace."},
             {"key": "accountant", "title": "Accountant collaboration", "state": "ready" if can_manage else "member", "detail": "Team roles, access control and audit are active."},
@@ -1204,6 +1284,169 @@ def update_workspace_profile(
     )
     db.commit()
     return _workspace_overview(db, context)
+
+
+@app.get("/v1/workflow-items")
+def list_workflow_items(
+    context: MemberContext = Depends(_member_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Shared operational queue; it stores workflow metadata, never invoice files."""
+    items = db.scalars(
+        select(WorkflowItem)
+        .where(WorkflowItem.workspace_id == context.workspace.id)
+        .order_by(WorkflowItem.status, WorkflowItem.due_date, WorkflowItem.created_at.desc())
+        .limit(200)
+    ).all()
+    active_members = db.scalars(
+        select(WorkspaceMember)
+        .where(WorkspaceMember.workspace_id == context.workspace.id, WorkspaceMember.status == "active")
+        .order_by(WorkspaceMember.display_name, WorkspaceMember.email)
+    ).all()
+    return {
+        "items": [_serialize_workflow_item(db, item) for item in items],
+        "members": [_serialize_member(member) for member in active_members],
+        "can_manage": context.member.role in WORKFLOW_MANAGER_ROLES,
+    }
+
+
+@app.post("/v1/workflow-items")
+def create_workflow_item(
+    payload: WorkflowItemCreate,
+    context: MemberContext = Depends(_member_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Create an accountable work item for a document, payment, VAT or review."""
+    _require_team_role(context, *WORKFLOW_MANAGER_ROLES)
+    assignee = _active_workspace_member(db, context.workspace.id, payload.assigned_member_id)
+    if payload.assigned_member_id.strip() and not assignee:
+        raise HTTPException(status_code=422, detail="Choose an active member of this workspace.")
+    item = WorkflowItem(
+        id=str(uuid.uuid4()),
+        workspace_id=context.workspace.id,
+        title=payload.title.strip(),
+        workflow_type=_normalize_workflow_option(payload.workflow_type, WORKFLOW_TYPES, "work type"),
+        priority=_normalize_workflow_option(payload.priority, WORKFLOW_PRIORITIES, "priority"),
+        due_date=_normalize_workflow_due_date(payload.due_date),
+        assigned_member_id=assignee.id if assignee else "",
+        created_by_member_id=context.member.id,
+    )
+    db.add(item)
+    _record_audit(
+        db,
+        workspace_id=context.workspace.id,
+        actor_member_id=context.member.id,
+        action="workflow.item_created",
+        entity_type="workflow_item",
+        entity_id=item.id,
+        details={"workflow_type": item.workflow_type, "priority": item.priority, "assigned": bool(item.assigned_member_id)},
+    )
+    db.commit()
+    return {"item": _serialize_workflow_item(db, item)}
+
+
+@app.patch("/v1/workflow-items/{item_id}")
+def update_workflow_item(
+    item_id: str,
+    payload: WorkflowItemUpdate,
+    context: MemberContext = Depends(_member_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Managers can assign, return to work or close a queue item with an audit trail."""
+    _require_team_role(context, *WORKFLOW_MANAGER_ROLES)
+    item = db.scalar(
+        select(WorkflowItem).where(WorkflowItem.id == item_id, WorkflowItem.workspace_id == context.workspace.id)
+    )
+    if not item:
+        raise HTTPException(status_code=404, detail="Work item not found.")
+    assignee = _active_workspace_member(db, context.workspace.id, payload.assigned_member_id)
+    if payload.assigned_member_id.strip() and not assignee:
+        raise HTTPException(status_code=422, detail="Choose an active member of this workspace.")
+    old_status = item.status
+    item.status = _normalize_workflow_option(payload.status, WORKFLOW_STATUSES, "status")
+    item.priority = _normalize_workflow_option(payload.priority, WORKFLOW_PRIORITIES, "priority")
+    item.due_date = _normalize_workflow_due_date(payload.due_date)
+    item.assigned_member_id = assignee.id if assignee else ""
+    item.closed_at = datetime.utcnow() if item.status == "done" else None
+    _record_audit(
+        db,
+        workspace_id=context.workspace.id,
+        actor_member_id=context.member.id,
+        action="workflow.item_updated",
+        entity_type="workflow_item",
+        entity_id=item.id,
+        details={"from_status": old_status, "to_status": item.status, "assigned": bool(item.assigned_member_id)},
+    )
+    db.commit()
+    return {"item": _serialize_workflow_item(db, item)}
+
+
+@app.get("/v1/workflow-items/{item_id}/comments")
+def list_workflow_comments(
+    item_id: str,
+    context: MemberContext = Depends(_member_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    item = db.scalar(
+        select(WorkflowItem).where(WorkflowItem.id == item_id, WorkflowItem.workspace_id == context.workspace.id)
+    )
+    if not item:
+        raise HTTPException(status_code=404, detail="Work item not found.")
+    comments = db.scalars(
+        select(WorkflowComment)
+        .where(WorkflowComment.workspace_id == context.workspace.id, WorkflowComment.workflow_item_id == item.id)
+        .order_by(WorkflowComment.created_at.asc())
+    ).all()
+    member_names = {
+        member.id: member.display_name or member.email
+        for member in db.scalars(
+            select(WorkspaceMember).where(WorkspaceMember.workspace_id == context.workspace.id)
+        ).all()
+    }
+    return {
+        "comments": [
+            {
+                "id": comment.id,
+                "body": comment.body,
+                "author_name": member_names.get(comment.author_member_id, "Former member"),
+                "created_at": comment.created_at.isoformat(timespec="seconds"),
+            }
+            for comment in comments
+        ]
+    }
+
+
+@app.post("/v1/workflow-items/{item_id}/comments")
+def add_workflow_comment(
+    item_id: str,
+    payload: WorkflowCommentCreate,
+    context: MemberContext = Depends(_member_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    item = db.scalar(
+        select(WorkflowItem).where(WorkflowItem.id == item_id, WorkflowItem.workspace_id == context.workspace.id)
+    )
+    if not item:
+        raise HTTPException(status_code=404, detail="Work item not found.")
+    comment = WorkflowComment(
+        id=str(uuid.uuid4()),
+        workspace_id=context.workspace.id,
+        workflow_item_id=item.id,
+        author_member_id=context.member.id,
+        body=payload.body.strip(),
+    )
+    db.add(comment)
+    _record_audit(
+        db,
+        workspace_id=context.workspace.id,
+        actor_member_id=context.member.id,
+        action="workflow.comment_added",
+        entity_type="workflow_item",
+        entity_id=item.id,
+        details={"comment_length": len(comment.body)},
+    )
+    db.commit()
+    return {"ok": True, "comment_id": comment.id}
 
 
 @app.get("/v1/team/sync")

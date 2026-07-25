@@ -158,6 +158,38 @@ class WorkspaceAuditEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow, index=True)
 
 
+class WorkflowItem(Base):
+    """Non-accounting work coordination for owner, accountant and team."""
+
+    __tablename__ = "workflow_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(36), index=True)
+    title: Mapped[str] = mapped_column(String(240))
+    workflow_type: Mapped[str] = mapped_column(String(32), default="document", index=True)
+    status: Mapped[str] = mapped_column(String(32), default="open", index=True)
+    priority: Mapped[str] = mapped_column(String(16), default="normal", index=True)
+    due_date: Mapped[str] = mapped_column(String(10), default="")
+    assigned_member_id: Mapped[str] = mapped_column(String(36), default="", index=True)
+    created_by_member_id: Mapped[str] = mapped_column(String(36), default="", index=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class WorkflowComment(Base):
+    """Short operational comments. Financial documents or credentials do not belong here."""
+
+    __tablename__ = "workflow_comments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(36), index=True)
+    workflow_item_id: Mapped[str] = mapped_column(String(36), index=True)
+    author_member_id: Mapped[str] = mapped_column(String(36), index=True)
+    body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow, index=True)
+
+
 class WorkspaceSyncSnapshot(Base):
     """Versioned encrypted-in-transit workspace data supplied by the desktop app."""
 
