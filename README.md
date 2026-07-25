@@ -91,6 +91,11 @@ team members can add operational comments. The queue keeps only task metadata,
 deadlines and comments, never invoice files, payment credentials or accounting
 snapshots.
 
+Owners and administrators can also review the company control trail in the
+portal. It records the time, action and responsible team account for relevant
+workspace, team, password-recovery, sync and workflow events, while keeping
+passwords, invoice bodies, files and payment credentials out of the audit view.
+
 Render Free blocks outbound SMTP ports. Verify `opsnestone.com` in Resend, then set `RESEND_API_KEY` in the Render dashboard. OpsNest uses `support@opsnestone.com` as the sender and automatically prefers Resend when this key is configured.
 
 ## Local development

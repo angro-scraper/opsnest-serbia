@@ -1524,12 +1524,19 @@ def team_audit(
         .order_by(WorkspaceAuditEvent.created_at.desc())
         .limit(100)
     ).all()
+    member_names = {
+        member.id: member.display_name or member.email
+        for member in db.scalars(
+            select(WorkspaceMember).where(WorkspaceMember.workspace_id == context.workspace.id)
+        ).all()
+    }
     return {
         "events": [
             {
                 "at": event.created_at.isoformat(),
                 "action": event.action,
                 "actor_member_id": event.actor_member_id,
+                "actor_name": member_names.get(event.actor_member_id, "System or former member"),
                 "entity_type": event.entity_type,
                 "entity_id": event.entity_id,
                 "details": json.loads(event.details_json or "{}"),
