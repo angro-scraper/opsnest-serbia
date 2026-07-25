@@ -61,6 +61,24 @@ hours. The panel intentionally cannot display customer invoices, PDFs,
 bookkeeping snapshots, passwords, tokens, payment credentials or PayPal
 webhook payloads.
 
+## Workspace portal foundation
+
+Owners, accountants and team members can use the authenticated workspace
+portal at:
+
+`https://api.opsnestone.com/workspace`
+
+The portal uses the existing team account created in OpsNest Desktop. It shows
+only safe collaboration metadata: the company country pack and default
+currency, plan and seat use, the member's role, sync status and platform-module
+readiness. Owners and administrators can select the country pack and business
+profile; every change is recorded in the workspace audit log.
+
+This is intentionally the first platform surface, not a browser copy of the
+desktop database. Invoices, financial records, attachments and accounting
+snapshots are not rendered in the portal until a dedicated country-specific
+cloud module is built and reviewed.
+
 Render Free blocks outbound SMTP ports. Verify `opsnestone.com` in Resend, then set `RESEND_API_KEY` in the Render dashboard. OpsNest uses `support@opsnestone.com` as the sender and automatically prefers Resend when this key is configured.
 
 ## Local development

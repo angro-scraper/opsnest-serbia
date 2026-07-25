@@ -28,6 +28,12 @@ class Workspace(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     owner_email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
     company_name: Mapped[str] = mapped_column(String(240), default="")
+    # A workspace starts international and then selects a country pack.  This
+    # is intentionally separate from bookkeeping data, which remains local
+    # until a country-specific cloud module is enabled.
+    country_code: Mapped[str] = mapped_column(String(8), default="INTL", index=True)
+    default_currency: Mapped[str] = mapped_column(String(8), default="EUR")
+    business_profile: Mapped[str] = mapped_column(String(32), default="general")
     client_token_hash: Mapped[str] = mapped_column(String(64), default="")
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
     trial_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
@@ -155,6 +161,9 @@ def create_schema() -> None:
     # additive and idempotent until the project adopts a migration framework.
     existing = {column["name"] for column in inspect(engine).get_columns("workspaces")}
     additions = {
+        "country_code": "VARCHAR(8) NOT NULL DEFAULT 'INTL'",
+        "default_currency": "VARCHAR(8) NOT NULL DEFAULT 'EUR'",
+        "business_profile": "VARCHAR(32) NOT NULL DEFAULT 'general'",
         "ai_advisor_status": "VARCHAR(32) NOT NULL DEFAULT 'disabled'",
         "ai_advisor_tier": "VARCHAR(32) NOT NULL DEFAULT ''",
         "ai_advisor_paypal_subscription_id": "VARCHAR(128) NOT NULL DEFAULT ''",

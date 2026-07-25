@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import uuid
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
@@ -32,6 +33,7 @@ from .admin_console import (
     verify_admin_credentials,
 )
 from .desktop_release import current_desktop_release
+from .workspace_portal import workspace_portal_html
 from .database import (
     EmailChallenge,
     MemberSession,
@@ -103,6 +105,16 @@ TEAM_ROLE_LABELS = {
 }
 TEAM_SESSION_DAYS = 30
 TEAM_INVITATION_HOURS = 48
+COUNTRY_PACKS = {
+    "RS": {"label": "Serbia", "currency": "RSD", "stage": "SEF and VAT workspace"},
+    "BG": {"label": "Bulgaria", "currency": "BGN", "stage": "VAT and e-invoice workspace"},
+    "HR": {"label": "Croatia", "currency": "EUR", "stage": "VAT and fiscalization foundation"},
+    "BA": {"label": "Bosnia and Herzegovina", "currency": "BAM", "stage": "Country-pack foundation"},
+    "ME": {"label": "Montenegro", "currency": "EUR", "stage": "Country-pack foundation"},
+    "MK": {"label": "North Macedonia", "currency": "MKD", "stage": "Country-pack foundation"},
+    "SI": {"label": "Slovenia", "currency": "EUR", "stage": "Country-pack foundation"},
+    "INTL": {"label": "International", "currency": "EUR", "stage": "International core"},
+}
 
 
 class RequestEmailCode(BaseModel):
@@ -142,6 +154,12 @@ class TeamLogin(BaseModel):
     email: str = Field(min_length=5, max_length=320)
     password: str = Field(min_length=10, max_length=256)
     device_name: str = Field(default="OpsNest Desktop", max_length=160)
+
+
+class WorkspaceProfileUpdate(BaseModel):
+    country_code: str = Field(default="INTL", min_length=2, max_length=8)
+    default_currency: str = Field(default="EUR", min_length=3, max_length=8)
+    business_profile: str = Field(default="general", pattern=r"^(construction|general|services|trade)$")
 
 
 class UploadSyncSnapshot(BaseModel):
@@ -225,6 +243,20 @@ def _normalize_team_role(value: str) -> str:
     return role
 
 
+def _normalize_country_code(value: str) -> str:
+    country = str(value or "INTL").strip().upper()
+    if not re.fullmatch(r"[A-Z]{2,8}", country):
+        raise HTTPException(status_code=422, detail="Enter a valid country code.")
+    return country
+
+
+def _normalize_currency_code(value: str) -> str:
+    currency = str(value or "EUR").strip().upper()
+    if not re.fullmatch(r"[A-Z]{3,8}", currency):
+        raise HTTPException(status_code=422, detail="Enter a valid currency code.")
+    return currency
+
+
 def _serialize_member(member: WorkspaceMember) -> dict[str, Any]:
     return {
         "id": member.id,
@@ -235,6 +267,49 @@ def _serialize_member(member: WorkspaceMember) -> dict[str, Any]:
         "status": member.status,
         "last_login_at": member.last_login_at.isoformat() if member.last_login_at else "",
         "created_at": member.created_at.isoformat() if member.created_at else "",
+    }
+
+
+def _workspace_overview(db: Session, context: MemberContext) -> dict[str, Any]:
+    """Safe platform data only; financial documents never leave the desktop here."""
+    workspace = context.workspace
+    country_code = _normalize_country_code(workspace.country_code)
+    country_pack = COUNTRY_PACKS.get(
+        country_code,
+        {"label": country_code, "currency": workspace.default_currency or "EUR", "stage": "International core"},
+    )
+    members = db.scalars(
+        select(WorkspaceMember).where(WorkspaceMember.workspace_id == workspace.id)
+    ).all()
+    snapshot = db.get(WorkspaceSyncSnapshot, workspace.id)
+    license_data = effective_license(workspace)
+    can_manage = context.member.role in {"owner", "administrator"}
+    sync_revision = int(snapshot.revision) if snapshot else 0
+    last_sync = snapshot.updated_at.isoformat(timespec="seconds") if snapshot and snapshot.updated_at else ""
+    return {
+        "workspace": {
+            "id": workspace.id,
+            "company_name": workspace.company_name,
+            "country_code": country_code,
+            "country_label": country_pack["label"],
+            "default_currency": workspace.default_currency or country_pack["currency"],
+            "business_profile": workspace.business_profile or "general",
+            "country_pack_stage": country_pack["stage"],
+        },
+        "member": _serialize_member(context.member),
+        "license": license_data,
+        "team": {
+            "seats_used": sum(1 for member in members if member.status in {"active", "invited"}),
+            "seat_limit": _team_seat_limit(workspace),
+            "can_manage": can_manage,
+        },
+        "sync": {"revision": sync_revision, "last_sync_at": last_sync, "enabled": bool(sync_revision)},
+        "modules": [
+            {"key": "projects", "title": "Projects and contracts", "state": "desktop", "detail": "Operational project records stay available in OpsNest Desktop."},
+            {"key": "documents", "title": "Documents and approvals", "state": "foundation", "detail": "Cloud document workflow is the next platform module."},
+            {"key": "money", "title": "Money and cash-flow", "state": "desktop", "detail": "Bank, cash and forecasts remain in the controlled desktop workspace."},
+            {"key": "accountant", "title": "Accountant collaboration", "state": "ready" if can_manage else "member", "detail": "Team roles, access control and audit are active."},
+        ],
     }
 
 
@@ -533,6 +608,14 @@ def desktop_update() -> dict[str, str]:
         settings.desktop_installer_url,
         settings.desktop_installer_sha256,
     )
+
+
+@app.get("/workspace", response_class=HTMLResponse)
+def workspace_portal() -> HTMLResponse:
+    """The first cloud surface for owners, accountants and project teams."""
+    response = HTMLResponse(workspace_portal_html())
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.get("/activate", response_class=HTMLResponse)
@@ -966,6 +1049,44 @@ def team_me(context: MemberContext = Depends(_member_dependency)) -> dict[str, A
             "delete_documents": context.member.role in {"owner", "administrator", "project_manager", "accountant"},
         },
     }
+
+
+@app.get("/v1/workspace/overview")
+def workspace_overview(
+    context: MemberContext = Depends(_member_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Platform landing data with collaboration metadata, never invoice payloads."""
+    return _workspace_overview(db, context)
+
+
+@app.post("/v1/workspace/profile")
+def update_workspace_profile(
+    payload: WorkspaceProfileUpdate,
+    context: MemberContext = Depends(_member_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Owners choose the country pack before statutory modules are enabled."""
+    _require_team_role(context, "owner", "administrator")
+    workspace = context.workspace
+    workspace.country_code = _normalize_country_code(payload.country_code)
+    workspace.default_currency = _normalize_currency_code(payload.default_currency)
+    workspace.business_profile = payload.business_profile
+    _record_audit(
+        db,
+        workspace_id=workspace.id,
+        actor_member_id=context.member.id,
+        action="workspace.profile_updated",
+        entity_type="workspace",
+        entity_id=workspace.id,
+        details={
+            "country_code": workspace.country_code,
+            "default_currency": workspace.default_currency,
+            "business_profile": workspace.business_profile,
+        },
+    )
+    db.commit()
+    return _workspace_overview(db, context)
 
 
 @app.get("/v1/team/sync")
