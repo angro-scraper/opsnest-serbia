@@ -95,6 +95,17 @@ Owners and administrators can also review the company control trail in the
 portal. It records the time, action and responsible team account for relevant
 workspace, team, password-recovery, sync and workflow events, while keeping
 passwords, invoice bodies, files and payment credentials out of the audit view.
+Each workspace trail is linked with a server-secret HMAC-SHA-256 chain. The
+portal verifies that chain for the owner or administrator before presenting the
+control result; an unexpected change, deletion or reordering must be treated
+as an incident and investigated before relying on the control trail. This is a
+tamper-evident operational control, not a statutory immutable-archive or
+country-compliance certification.
+
+Workspace and API responses are marked `no-store`, cannot be embedded in an
+external frame and carry restrictive browser security headers. Authorization
+is still checked independently on every protected route; these headers are an
+additional browser boundary, not a replacement for roles or session checks.
 
 ## Document Inbox storage
 

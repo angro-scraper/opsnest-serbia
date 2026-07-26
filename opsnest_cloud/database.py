@@ -144,7 +144,12 @@ class MemberSession(Base):
 
 
 class WorkspaceAuditEvent(Base):
-    """Minimal immutable audit log. It stores actions, never accounting payloads or passwords."""
+    """Append-only operational audit trail with a per-workspace integrity chain.
+
+    The hash values are intentionally metadata-only.  They make an unexpected
+    change, deletion or reordering of an event visible to the control API;
+    they do not turn the portal into a statutory archive.
+    """
 
     __tablename__ = "workspace_audit_events"
 
@@ -156,6 +161,8 @@ class WorkspaceAuditEvent(Base):
     entity_id: Mapped[str] = mapped_column(String(80), default="")
     details_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow, index=True)
+    previous_hash: Mapped[str] = mapped_column(String(64), default="")
+    entry_hash: Mapped[str] = mapped_column(String(64), default="", index=True)
 
 
 class WorkflowItem(Base):
@@ -258,6 +265,17 @@ def create_schema() -> None:
         for name, definition in additions.items():
             if name not in existing:
                 connection.execute(text(f"ALTER TABLE workspaces ADD COLUMN {name} {definition}"))
+        audit_existing = {
+            column["name"]
+            for column in inspect(engine).get_columns("workspace_audit_events")
+        }
+        audit_additions = {
+            "previous_hash": "VARCHAR(64) NOT NULL DEFAULT ''",
+            "entry_hash": "VARCHAR(64) NOT NULL DEFAULT ''",
+        }
+        for name, definition in audit_additions.items():
+            if name not in audit_existing:
+                connection.execute(text(f"ALTER TABLE workspace_audit_events ADD COLUMN {name} {definition}"))
 
 
 def get_session() -> Iterator[Session]:

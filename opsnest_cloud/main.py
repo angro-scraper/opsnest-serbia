@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import re
 import uuid
@@ -15,7 +16,7 @@ from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -57,6 +58,7 @@ from .database import (
     WorkflowItem,
     create_schema,
     get_session,
+    SessionLocal,
 )
 from .security import (
     new_client_token,
@@ -95,6 +97,7 @@ PLAN_PRICES = {
 async def lifespan(_: FastAPI):
     settings.validate_production()
     create_schema()
+    _migrate_workspace_audit_chain()
     yield
 
 
@@ -106,6 +109,32 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH"],
     allow_headers=["Authorization", "Content-Type", "X-OpsNest-Workspace", "X-OpsNest-Client", "X-OpsNest-Member"],
 )
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Keep browser/workspace responses out of shared caches and frames.
+
+    The Workspace uses a short-lived bearer session in browser memory.  These
+    headers reduce exposure from cached pages, MIME sniffing and embedding;
+    API authorization remains enforced independently by every protected route.
+    """
+    response: Response = await call_next(request)
+    response.headers.setdefault("Cache-Control", "no-store")
+    response.headers.setdefault("Pragma", "no-cache")
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; "
+        "form-action 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'unsafe-inline' https://www.paypal.com https://www.sandbox.paypal.com; "
+        "connect-src 'self' https://www.paypal.com https://www.sandbox.paypal.com; "
+        "frame-src https://www.paypal.com https://www.sandbox.paypal.com",
+    )
+    return response
 
 
 TEAM_ROLES = {"owner", "administrator", "project_manager", "accountant", "operator"}
@@ -458,6 +487,95 @@ def _workspace_overview(db: Session, context: MemberContext) -> dict[str, Any]:
     }
 
 
+def _workspace_audit_hash(event: WorkspaceAuditEvent, previous_hash: str) -> str:
+    """Create a deterministic, secret-bound hash for one audit event.
+
+    Unlike an ordinary checksum, the HMAC cannot be recreated from a copied
+    database alone.  The signed values remain safe to expose as verification
+    evidence because the signing secret itself never leaves Render.
+    """
+    material = {
+        "previous_hash": str(previous_hash or ""),
+        "id": event.id,
+        "workspace_id": event.workspace_id,
+        "actor_member_id": event.actor_member_id,
+        "action": event.action,
+        "entity_type": event.entity_type,
+        "entity_id": event.entity_id,
+        "details_json": event.details_json,
+        "created_at": event.created_at.isoformat(timespec="microseconds"),
+    }
+    encoded = json.dumps(material, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return hmac.new(settings.signing_secret.encode("utf-8"), encoded, hashlib.sha256).hexdigest()
+
+
+def _migrate_workspace_audit_chain() -> None:
+    """Create an explicit integrity baseline for audit events made before this release.
+
+    This migration deliberately fills only a legacy workspace that has no
+    chain at all.  A partially missing or modified live chain is preserved so
+    the verifier can report it as an integrity incident rather than hiding it.
+    """
+    db = SessionLocal()
+    try:
+        events = db.scalars(
+            select(WorkspaceAuditEvent).order_by(
+                WorkspaceAuditEvent.workspace_id.asc(),
+                WorkspaceAuditEvent.created_at.asc(),
+                WorkspaceAuditEvent.id.asc(),
+            )
+        ).all()
+        grouped: dict[str, list[WorkspaceAuditEvent]] = defaultdict(list)
+        for event in events:
+            grouped[event.workspace_id].append(event)
+        changed = False
+        for workspace_events in grouped.values():
+            if not workspace_events or any(event.entry_hash or event.previous_hash for event in workspace_events):
+                continue
+            previous_hash = ""
+            for event in workspace_events:
+                event.previous_hash = previous_hash
+                event.entry_hash = _workspace_audit_hash(event, previous_hash)
+                previous_hash = event.entry_hash
+            changed = True
+        if changed:
+            db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def _verify_workspace_audit_chain(db: Session, workspace_id: str) -> dict[str, Any]:
+    events = db.scalars(
+        select(WorkspaceAuditEvent)
+        .where(WorkspaceAuditEvent.workspace_id == workspace_id)
+        .order_by(WorkspaceAuditEvent.created_at.asc(), WorkspaceAuditEvent.id.asc())
+    ).all()
+    previous_hash = ""
+    for event in events:
+        if event.previous_hash != previous_hash or not event.entry_hash:
+            return {
+                "ok": False,
+                "count": len(events),
+                "invalid_event_id": event.id,
+                "last_hash": previous_hash,
+                "detail": "The audit sequence is missing or out of order.",
+            }
+        expected_hash = _workspace_audit_hash(event, previous_hash)
+        if not hmac.compare_digest(event.entry_hash, expected_hash):
+            return {
+                "ok": False,
+                "count": len(events),
+                "invalid_event_id": event.id,
+                "last_hash": previous_hash,
+                "detail": "The audit event integrity check failed.",
+            }
+        previous_hash = event.entry_hash
+    return {"ok": True, "count": len(events), "invalid_event_id": "", "last_hash": previous_hash, "detail": "Audit integrity verified."}
+
+
 def _record_audit(
     db: Session,
     *,
@@ -468,18 +586,26 @@ def _record_audit(
     entity_id: str = "",
     details: dict[str, Any] | None = None,
 ) -> None:
-    """Record only operational metadata; billing credentials and accounting data stay out."""
-    db.add(
-        WorkspaceAuditEvent(
-            id=str(uuid.uuid4()),
-            workspace_id=workspace_id,
-            actor_member_id=actor_member_id,
-            action=action,
-            entity_type=entity_type,
-            entity_id=entity_id,
-            details_json=json.dumps(details or {}, ensure_ascii=False, sort_keys=True),
-        )
+    """Record metadata and attach it to the workspace integrity chain."""
+    event = WorkspaceAuditEvent(
+        id=str(uuid.uuid4()),
+        workspace_id=workspace_id,
+        actor_member_id=actor_member_id,
+        action=action,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        details_json=json.dumps(details or {}, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
     )
+    db.add(event)
+    db.flush()
+    previous = db.scalar(
+        select(WorkspaceAuditEvent.entry_hash)
+        .where(WorkspaceAuditEvent.workspace_id == workspace_id, WorkspaceAuditEvent.id != event.id)
+        .order_by(WorkspaceAuditEvent.created_at.desc(), WorkspaceAuditEvent.id.desc())
+        .limit(1)
+    )
+    event.previous_hash = str(previous or "")
+    event.entry_hash = _workspace_audit_hash(event, event.previous_hash)
 
 
 def _ensure_owner_member(db: Session, workspace: Workspace) -> WorkspaceMember:
@@ -1756,6 +1882,22 @@ def team_audit(
             for event in events
         ]
     }
+
+
+@app.get("/v1/team/audit/integrity")
+def team_audit_integrity(
+    context: MemberContext = Depends(_member_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Verify the complete workspace audit chain for an accountable control."""
+    _require_team_role(context, "owner", "administrator")
+    result = _verify_workspace_audit_chain(db, context.workspace.id)
+    if not result["ok"]:
+        raise HTTPException(
+            status_code=409,
+            detail="Workspace audit integrity needs investigation before this control can be relied on.",
+        )
+    return result
 
 
 @app.get("/v1/billing/summary")
