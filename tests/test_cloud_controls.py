@@ -17,6 +17,7 @@ _SOURCE_ROOT = Path(__file__).resolve().parents[1]
 _DATABASE_PATH = Path(tempfile.gettempdir()) / f"opsnest-cloud-controls-{uuid.uuid4().hex}.sqlite"
 os.environ["DATABASE_URL"] = "sqlite:///" + _DATABASE_PATH.as_posix()
 os.environ["APP_SIGNING_SECRET"] = "test-only-workspace-audit-secret"
+os.environ["WORKSPACE_SNAPSHOT_ENCRYPTION_SECRET"] = "test-only-workspace-snapshot-encryption-secret"
 os.environ["APP_ENV"] = "development"
 sys.path.insert(0, str(_SOURCE_ROOT))
 
@@ -269,7 +270,10 @@ class CloudControlTests(unittest.TestCase):
             self.assertNotIn("unchanged", first_upload)
             retry_upload = upload_team_snapshot(payload, owner_context, db)
             self.assertEqual(retry_upload, {"ok": True, "revision": 1, "sha256": checksum, "unchanged": True})
-            self.assertEqual(db.query(WorkspaceSyncSnapshot).filter_by(workspace_id=workspace_id).one().revision, 1)
+            stored_snapshot = db.query(WorkspaceSyncSnapshot).filter_by(workspace_id=workspace_id).one()
+            self.assertEqual(stored_snapshot.revision, 1)
+            self.assertTrue(stored_snapshot.snapshot_b64.startswith("v1:"))
+            self.assertNotEqual(stored_snapshot.snapshot_b64, payload.snapshot_b64)
 
             downloaded = download_team_snapshot(accountant_context, db)
             self.assertEqual(downloaded["sha256"], checksum)

@@ -22,6 +22,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from cryptography.fernet import Fernet, InvalidToken
 
 from .config import settings
 from .admin_console import (
@@ -965,6 +966,38 @@ def _require_team_sync(context: MemberContext) -> None:
     if "team_users" not in features:
         raise HTTPException(status_code=403, detail="Shared team synchronization requires a Business or Pro package.")
     _require_team_role(context, *FINANCE_ROLES)
+
+
+def _workspace_snapshot_cipher() -> Fernet:
+    """Build a server-only Fernet cipher from Render-managed secret entropy."""
+    secret = settings.workspace_snapshot_encryption_secret
+    if not secret:
+        raise HTTPException(
+            status_code=503,
+            detail="Protected team synchronization is not configured yet. Contact OpsNest support.",
+        )
+    key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode("utf-8")).digest())
+    return Fernet(key)
+
+
+def _encrypt_workspace_snapshot(raw_snapshot: bytes) -> str:
+    """Mark ciphertext format explicitly so legacy plain Base64 is never served."""
+    return "v1:" + _workspace_snapshot_cipher().encrypt(raw_snapshot).decode("ascii")
+
+
+def _decrypt_workspace_snapshot(stored_snapshot: str) -> bytes:
+    if not str(stored_snapshot or "").startswith("v1:"):
+        raise HTTPException(
+            status_code=409,
+            detail="This legacy team snapshot must be uploaded again before it can be downloaded securely.",
+        )
+    try:
+        return _workspace_snapshot_cipher().decrypt(stored_snapshot[3:].encode("ascii"))
+    except (InvalidToken, ValueError, UnicodeEncodeError) as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="The protected team snapshot cannot be decrypted. Treat this as a synchronization incident.",
+        ) from exc
 
 
 def _require_finance_role(context: MemberContext) -> MemberContext:
@@ -2275,10 +2308,16 @@ def download_team_snapshot(
     snapshot = db.get(WorkspaceSyncSnapshot, context.workspace.id)
     if snapshot is None:
         return {"revision": 0, "sha256": "", "snapshot_b64": "", "updated_at": ""}
+    raw_snapshot = _decrypt_workspace_snapshot(snapshot.snapshot_b64)
+    if hashlib.sha256(raw_snapshot).hexdigest() != snapshot.sha256:
+        raise HTTPException(
+            status_code=409,
+            detail="The protected team snapshot checksum is not valid. Treat this as a synchronization incident.",
+        )
     return {
         "revision": snapshot.revision,
         "sha256": snapshot.sha256,
-        "snapshot_b64": snapshot.snapshot_b64,
+        "snapshot_b64": base64.b64encode(raw_snapshot).decode("ascii"),
         "updated_at": snapshot.updated_at.isoformat() if snapshot.updated_at else "",
     }
 
@@ -2310,7 +2349,7 @@ def upload_team_snapshot(
     incoming_sha256 = payload.sha256.lower()
     # A retry after a network interruption must be safe. If this exact content
     # is already current, return success without a duplicate version or audit event.
-    if snapshot is not None and snapshot.sha256 == incoming_sha256:
+    if snapshot is not None and snapshot.sha256 == incoming_sha256 and snapshot.snapshot_b64.startswith("v1:"):
         return {"ok": True, "revision": current_revision, "sha256": snapshot.sha256, "unchanged": True}
     if payload.expected_revision != current_revision:
         raise HTTPException(
@@ -2321,7 +2360,7 @@ def upload_team_snapshot(
         snapshot = WorkspaceSyncSnapshot(workspace_id=context.workspace.id)
         db.add(snapshot)
     snapshot.revision = current_revision + 1
-    snapshot.snapshot_b64 = payload.snapshot_b64
+    snapshot.snapshot_b64 = _encrypt_workspace_snapshot(raw_snapshot)
     snapshot.sha256 = incoming_sha256
     snapshot.updated_by_member_id = context.member.id
     snapshot.updated_at = datetime.utcnow()

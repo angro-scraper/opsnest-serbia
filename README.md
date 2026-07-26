@@ -103,6 +103,13 @@ recorded in the workspace audit trail. This access model is a platform control,
 not a substitute for a company retention policy or country-specific archive
 requirements.
 
+Desktop workspace snapshots are encrypted on the server before Postgres stores
+them, with a Render-only encryption secret. A snapshot is decrypted only for
+an authorized owner, administrator or accountant over the authenticated HTTPS
+sync route; the database contains a versioned ciphertext, not an ordinary
+Base64 copy of the local database. Legacy unencrypted snapshots are never
+served and must be uploaded again after the protected-sync update.
+
 The portal also provides password recovery for an active team account. A
 six-digit recovery code is sent only to the member's registered business
 e-mail, expires after 15 minutes, accepts at most five attempts and revokes

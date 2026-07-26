@@ -49,6 +49,7 @@ class Settings:
     document_storage_bucket: str
     document_storage_access_key: str
     document_storage_secret_key: str
+    workspace_snapshot_encryption_secret: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -109,6 +110,9 @@ class Settings:
             document_storage_bucket=_value("DOCUMENT_STORAGE_BUCKET"),
             document_storage_access_key=_value("DOCUMENT_STORAGE_ACCESS_KEY"),
             document_storage_secret_key=_value("DOCUMENT_STORAGE_SECRET_KEY"),
+            # Server-only entropy for encrypted Desktop workspace snapshots.
+            # It is intentionally never returned to a member or installer.
+            workspace_snapshot_encryption_secret=_value("WORKSPACE_SNAPSHOT_ENCRYPTION_SECRET"),
         )
 
     @property
@@ -170,6 +174,7 @@ class Settings:
             "RESEND_API_KEY": "configured" if email_delivery_configured else "",
             "TURNSTILE_SITE_KEY": self.turnstile_site_key,
             "TURNSTILE_SECRET_KEY": self.turnstile_secret_key,
+            "WORKSPACE_SNAPSHOT_ENCRYPTION_SECRET": "configured" if self.workspace_snapshot_encryption_secret else "",
         }
         missing = [name for name, value in required.items() if not value]
         if missing:

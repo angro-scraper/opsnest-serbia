@@ -260,7 +260,7 @@ class CountryPackControl(Base):
 
 
 class WorkspaceSyncSnapshot(Base):
-    """Versioned encrypted-in-transit workspace data supplied by the desktop app."""
+    """Versioned server-encrypted workspace data supplied by the desktop app."""
 
     __tablename__ = "workspace_sync_snapshots"
 
