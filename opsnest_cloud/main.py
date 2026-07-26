@@ -43,6 +43,7 @@ from .document_storage import (
     put_private_document,
     safe_filename,
     signed_document_download,
+    valid_document_signature,
 )
 from .workspace_portal import workspace_portal_html
 from .database import (
@@ -2181,14 +2182,6 @@ def add_workflow_comment(
     return {"ok": True, "comment_id": comment.id}
 
 
-def _valid_document_signature(content_type: str, content: bytes) -> bool:
-    return (
-        (content_type == "application/pdf" and content.startswith(b"%PDF-"))
-        or (content_type == "image/jpeg" and content.startswith(b"\xff\xd8\xff"))
-        or (content_type == "image/png" and content.startswith(b"\x89PNG\r\n\x1a\n"))
-    )
-
-
 @app.get("/v1/documents/status")
 def documents_status(context: MemberContext = Depends(_member_dependency)) -> dict[str, object]:
     """Safe capability status; does not reveal bucket credentials or configuration."""
@@ -2234,7 +2227,7 @@ async def upload_workspace_document(
     content = await file.read(MAX_DOCUMENT_BYTES + 1)
     if len(content) > MAX_DOCUMENT_BYTES:
         raise HTTPException(status_code=413, detail="Document is larger than the 15 MB upload limit.")
-    if not _valid_document_signature(content_type, content):
+    if not valid_document_signature(content_type, content):
         raise HTTPException(status_code=415, detail="The uploaded file does not match an allowed PDF, JPEG or PNG format.")
     workflow_id = str(workflow_item_id or "").strip()
     if workflow_id and not db.scalar(

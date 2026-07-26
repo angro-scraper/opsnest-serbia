@@ -56,11 +56,22 @@ def safe_filename(value: str) -> str:
     return (name.strip(".-") or "document")[:180]
 
 
+def valid_document_signature(content_type: str, content: bytes) -> bool:
+    """Verify bytes, not only the browser-supplied MIME declaration."""
+    return (
+        (content_type == "application/pdf" and content.startswith(b"%PDF-"))
+        or (content_type == "image/jpeg" and content.startswith(b"\xff\xd8\xff"))
+        or (content_type == "image/png" and content.startswith(b"\x89PNG\r\n\x1a\n"))
+    )
+
+
 def put_private_document(*, storage_key: str, content: bytes, content_type: str) -> None:
     if len(content) > MAX_DOCUMENT_BYTES:
         raise HTTPException(status_code=413, detail="Document is larger than the 15 MB upload limit.")
     if content_type not in ALLOWED_DOCUMENT_TYPES:
         raise HTTPException(status_code=415, detail="Only PDF, JPEG and PNG documents can be uploaded.")
+    if not valid_document_signature(content_type, content):
+        raise HTTPException(status_code=415, detail="The uploaded file does not match an allowed PDF, JPEG or PNG format.")
     try:
         _client().put_object(
             Bucket=settings.document_storage_bucket,
