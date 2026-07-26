@@ -110,6 +110,7 @@ class TeamInvitation(Base):
     code_hash: Mapped[str] = mapped_column(String(64))
     invited_by_member_id: Mapped[str] = mapped_column(String(36), default="")
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=False))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=utc_now)
 
@@ -324,6 +325,13 @@ def create_schema() -> None:
                 connection.execute(
                     text("ALTER TABLE country_pack_controls ADD COLUMN country_code VARCHAR(8) NOT NULL DEFAULT 'INTL'")
                 )
+        if "team_invitations" in country_control_tables:
+            invitation_existing = {
+                column["name"]
+                for column in inspect(engine).get_columns("team_invitations")
+            }
+            if "attempts" not in invitation_existing:
+                connection.execute(text("ALTER TABLE team_invitations ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"))
 
 
 def get_session() -> Iterator[Session]:

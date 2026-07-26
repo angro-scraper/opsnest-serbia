@@ -36,6 +36,7 @@ from opsnest_cloud.database import (  # noqa: E402
     WorkspaceFinancialOverview,
     WorkspaceMember,
     WorkspaceSyncSnapshot,
+    TeamInvitation,
     WorkspaceDocument,
     WorkflowComment,
     WorkflowItem,
@@ -65,6 +66,8 @@ from opsnest_cloud.main import (  # noqa: E402
     WorkflowItemUpdate,
     update_country_pack_readiness,
     TeamLogin,
+    AcceptTeamInvitation,
+    accept_team_invitation,
     team_login,
     _TEAM_LOGIN_LIMIT,
     _team_login_attempts,
@@ -79,6 +82,7 @@ from opsnest_cloud.document_storage import (  # noqa: E402
 )
 from opsnest_cloud import document_storage  # noqa: E402
 from opsnest_cloud.desktop_release import FALLBACK_RELEASE, current_desktop_release  # noqa: E402
+from opsnest_cloud.security import secret_hash  # noqa: E402
 from opsnest_cloud.time_utils import utc_now  # noqa: E402
 
 
@@ -155,6 +159,40 @@ class CloudControlTests(unittest.TestCase):
         finally:
             with _team_login_lock:
                 _team_login_attempts.clear()
+            db.close()
+
+    def test_only_latest_invitation_code_can_be_tried_five_times(self) -> None:
+        db = SessionLocal()
+        workspace_id = str(uuid.uuid4())
+        member_id = str(uuid.uuid4())
+        payload = AcceptTeamInvitation(
+            email="invitee@example.test", code="000000", password="new-safe-password", device_name="QA desktop",
+        )
+        try:
+            workspace = Workspace(
+                id=workspace_id, owner_email="invite-owner@example.test",
+                company_name="Test Company", subscription_status="active",
+            )
+            member = WorkspaceMember(
+                id=member_id, workspace_id=workspace_id, email="invitee@example.test",
+                display_name="Invitee", role="operator", status="invited",
+            )
+            invitation = TeamInvitation(
+                id=str(uuid.uuid4()), workspace_id=workspace_id, email="invitee@example.test",
+                display_name="Invitee", role="operator", code_hash=secret_hash("123456"),
+                expires_at=utc_now() + timedelta(hours=1), attempts=0,
+            )
+            db.add_all([workspace, member, invitation])
+            db.commit()
+            for _ in range(5):
+                with self.assertRaises(HTTPException) as rejected:
+                    accept_team_invitation(payload, db)
+                self.assertEqual(rejected.exception.status_code, 400)
+            with self.assertRaises(HTTPException) as rate_limited:
+                accept_team_invitation(payload, db)
+            self.assertEqual(rate_limited.exception.status_code, 429)
+            self.assertEqual(db.get(TeamInvitation, invitation.id).attempts, 5)
+        finally:
             db.close()
 
     def test_document_storage_validates_real_file_signatures_and_safe_names(self) -> None:

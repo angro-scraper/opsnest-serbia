@@ -1584,7 +1584,7 @@ def invite_team_member(
     )
     if existing and existing.status == "active":
         raise HTTPException(status_code=409, detail="This person is already an active team member.")
-    pending = db.scalar(
+    pending = db.scalars(
         select(TeamInvitation)
         .where(
             TeamInvitation.workspace_id == workspace.id,
@@ -1593,9 +1593,15 @@ def invite_team_member(
             TeamInvitation.expires_at > utc_now(),
         )
         .order_by(TeamInvitation.created_at.desc())
-    )
+    ).all()
     if not existing and not pending and _team_seats_used(db, workspace.id) >= _team_seat_limit(workspace):
         raise HTTPException(status_code=409, detail="All team seats in this package are already used. Upgrade the package to invite another person.")
+    # A reissued invitation must supersede every earlier code for the same
+    # recipient. Leaving older valid codes in circulation would make revoking
+    # a misplaced e-mail impossible.
+    now = utc_now()
+    for prior_invitation in pending:
+        prior_invitation.expires_at = now
     code = new_email_code()
     invitation = TeamInvitation(
         id=str(uuid.uuid4()),
@@ -1605,7 +1611,7 @@ def invite_team_member(
         role=role,
         code_hash=secret_hash(code),
         invited_by_member_id=context.member.id,
-        expires_at=utc_now() + timedelta(hours=TEAM_INVITATION_HOURS),
+        expires_at=now + timedelta(hours=TEAM_INVITATION_HOURS),
     )
     if existing:
         existing.display_name = invitation.display_name or existing.display_name
@@ -1650,7 +1656,7 @@ def invite_team_member(
 @app.post("/v1/team/invitations/accept")
 def accept_team_invitation(payload: AcceptTeamInvitation, db: Session = Depends(get_session)) -> dict[str, Any]:
     email = _normalize_email(payload.email)
-    invitations = db.scalars(
+    invitation = db.scalar(
         select(TeamInvitation)
         .where(
             TeamInvitation.email == email,
@@ -1658,9 +1664,14 @@ def accept_team_invitation(payload: AcceptTeamInvitation, db: Session = Depends(
             TeamInvitation.expires_at > utc_now(),
         )
         .order_by(TeamInvitation.created_at.desc())
-    ).all()
-    invitation = next((item for item in invitations if secret_hash(payload.code) == item.code_hash), None)
+    )
     if invitation is None:
+        raise HTTPException(status_code=400, detail="The invitation code is not valid or has expired.")
+    if invitation.attempts >= 5:
+        raise HTTPException(status_code=429, detail="Too many invitation code attempts. Request a new invitation.")
+    invitation.attempts += 1
+    if secret_hash(payload.code) != invitation.code_hash:
+        db.commit()
         raise HTTPException(status_code=400, detail="The invitation code is not valid or has expired.")
     workspace = db.get(Workspace, invitation.workspace_id)
     member = db.scalar(
