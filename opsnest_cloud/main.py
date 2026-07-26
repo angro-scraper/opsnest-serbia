@@ -151,7 +151,7 @@ TEAM_ROLE_LABELS = {
 TEAM_SESSION_DAYS = 30
 TEAM_INVITATION_HOURS = 48
 WORKFLOW_TYPES = {"document", "payment", "vat", "review", "other"}
-WORKFLOW_STATUSES = {"open", "in_progress", "waiting", "done"}
+WORKFLOW_STATUSES = {"open", "in_progress", "waiting", "returned", "done"}
 WORKFLOW_PRIORITIES = {"low", "normal", "high", "urgent"}
 WORKFLOW_MANAGER_ROLES = {"owner", "administrator", "project_manager", "accountant"}
 DOCUMENT_TYPES = {"invoice", "receipt", "contract", "statement", "other"}
@@ -262,6 +262,7 @@ class WorkflowItemUpdate(BaseModel):
     priority: str = Field(default="normal", max_length=16)
     due_date: str = Field(default="", max_length=10)
     assigned_member_id: str = Field(default="", max_length=36)
+    comment: str = Field(default="", max_length=2_000)
 
 
 class WorkflowCommentCreate(BaseModel):
@@ -2014,19 +2015,33 @@ def update_workflow_item(
     if payload.assigned_member_id.strip() and not assignee:
         raise HTTPException(status_code=422, detail="Choose an active member of this workspace.")
     old_status = item.status
-    item.status = _normalize_workflow_option(payload.status, WORKFLOW_STATUSES, "status")
+    new_status = _normalize_workflow_option(payload.status, WORKFLOW_STATUSES, "status")
+    return_comment = payload.comment.strip()
+    if new_status == "returned" and len(return_comment) < 3:
+        raise HTTPException(status_code=422, detail="A comment is required when work is returned for correction.")
+    item.status = new_status
     item.priority = _normalize_workflow_option(payload.priority, WORKFLOW_PRIORITIES, "priority")
     item.due_date = _normalize_workflow_due_date(payload.due_date)
     item.assigned_member_id = assignee.id if assignee else ""
     item.closed_at = datetime.utcnow() if item.status == "done" else None
+    if return_comment:
+        db.add(
+            WorkflowComment(
+                id=str(uuid.uuid4()),
+                workspace_id=context.workspace.id,
+                workflow_item_id=item.id,
+                author_member_id=context.member.id,
+                body=return_comment,
+            )
+        )
     _record_audit(
         db,
         workspace_id=context.workspace.id,
         actor_member_id=context.member.id,
-        action="workflow.item_updated",
+        action="workflow.returned_for_correction" if item.status == "returned" else "workflow.item_updated",
         entity_type="workflow_item",
         entity_id=item.id,
-        details={"from_status": old_status, "to_status": item.status, "assigned": bool(item.assigned_member_id)},
+        details={"from_status": old_status, "to_status": item.status, "assigned": bool(item.assigned_member_id), "comment_recorded": bool(return_comment)},
     )
     db.commit()
     return {"item": _serialize_workflow_item(db, item)}

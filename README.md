@@ -91,6 +91,12 @@ team members can add operational comments. The queue keeps only task metadata,
 deadlines and comments, never invoice files, payment credentials or accounting
 snapshots.
 
+When an owner, administrator, project manager or accountant returns a work
+item for correction, OpsNest requires a correction comment of at least three
+characters. The comment is retained in the item history and the status change
+is appended to the integrity-protected audit chain. A return without a reason
+is rejected, so a replacement person can understand the next required action.
+
 ### Automated control brief
 
 Every authenticated workspace also receives a read-only daily control brief.

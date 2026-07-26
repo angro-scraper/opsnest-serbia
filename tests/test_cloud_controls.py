@@ -18,6 +18,7 @@ os.environ["APP_SIGNING_SECRET"] = "test-only-workspace-audit-secret"
 os.environ["APP_ENV"] = "development"
 sys.path.insert(0, str(_SOURCE_ROOT))
 
+from fastapi import HTTPException  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import select  # noqa: E402
 
@@ -29,6 +30,7 @@ from opsnest_cloud.database import (  # noqa: E402
     WorkspaceAuditEvent,
     WorkspaceFinancialOverview,
     WorkspaceMember,
+    WorkflowComment,
     WorkflowItem,
     create_schema,
     engine,
@@ -44,6 +46,8 @@ from opsnest_cloud.main import (  # noqa: E402
     get_country_pack_readiness,
     list_team_sessions,
     revoke_team_session,
+    update_workflow_item,
+    WorkflowItemUpdate,
     update_country_pack_readiness,
 )
 
@@ -292,6 +296,65 @@ class CloudControlTests(unittest.TestCase):
             self.assertEqual(controls["country_control_blocked"]["target"], "countryReadinessSection")
             self.assertIn("financial_overview_stale", controls)
             self.assertIn("not a payment instruction", brief["disclaimer"])
+        finally:
+            db.close()
+
+    def test_returned_work_requires_a_comment_and_records_the_correction(self) -> None:
+        db = SessionLocal()
+        workspace_id = str(uuid.uuid4())
+        member_id = str(uuid.uuid4())
+        try:
+            workspace = Workspace(
+                id=workspace_id,
+                owner_email="return-owner@example.test",
+                company_name="Test Company",
+                subscription_status="active",
+            )
+            owner = WorkspaceMember(
+                id=member_id,
+                workspace_id=workspace_id,
+                email="return-owner@example.test",
+                display_name="Return Owner",
+                role="owner",
+                status="active",
+            )
+            session = MemberSession(
+                id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=member_id,
+                token_hash="return-session", expires_at=datetime.utcnow() + timedelta(days=1),
+            )
+            item = WorkflowItem(
+                id=str(uuid.uuid4()), workspace_id=workspace_id, title="Review supplier document",
+                status="in_progress", priority="high", assigned_member_id=member_id,
+            )
+            db.add_all([workspace, owner, session, item])
+            db.commit()
+            context = MemberContext(workspace=workspace, member=owner, session=session)
+
+            with self.assertRaises(HTTPException) as rejected:
+                update_workflow_item(
+                    item.id,
+                    WorkflowItemUpdate(status="returned", priority="high", assigned_member_id=member_id),
+                    context,
+                    db,
+                )
+            self.assertEqual(rejected.exception.status_code, 422)
+            self.assertEqual(item.status, "in_progress")
+
+            result = update_workflow_item(
+                item.id,
+                WorkflowItemUpdate(
+                    status="returned", priority="high", assigned_member_id=member_id,
+                    comment="Please attach the supplier source document.",
+                ),
+                context,
+                db,
+            )
+            self.assertEqual(result["item"]["status"], "returned")
+            comment = db.scalar(
+                select(WorkflowComment).where(WorkflowComment.workflow_item_id == item.id)
+            )
+            self.assertEqual(comment.body if comment else "", "Please attach the supplier source document.")
+            self.assertTrue(_verify_workspace_audit_chain(db, workspace_id)["ok"])
         finally:
             db.close()
 
