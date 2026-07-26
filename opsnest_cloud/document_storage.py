@@ -30,6 +30,24 @@ def document_storage_status() -> dict[str, object]:
     }
 
 
+def document_storage_readiness() -> str:
+    """Return a safe, non-secret readiness state for the private bucket.
+
+    A configured endpoint is not enough for financial-document retention. The
+    service must be able to authenticate against the exact bucket before the
+    Workspace describes the inbox as available.
+    """
+    if not settings.document_storage_enabled:
+        return "not_configured"
+    try:
+        _client().head_bucket(Bucket=settings.document_storage_bucket)
+    except HTTPException:
+        return "unavailable"
+    except Exception:
+        return "unavailable"
+    return "ready"
+
+
 def _client():
     if not settings.document_storage_enabled:
         raise HTTPException(

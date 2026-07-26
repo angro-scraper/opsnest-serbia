@@ -11,6 +11,8 @@ import base64
 import hashlib
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 
 _SOURCE_ROOT = Path(__file__).resolve().parents[1]
@@ -45,6 +47,7 @@ from opsnest_cloud.main import (  # noqa: E402
     MemberContext,
     _record_audit,
     _verify_workspace_audit_chain,
+    _workspace_overview,
     export_team_audit_evidence,
     FinancialOverviewUpload,
     get_workspace_financial_overview,
@@ -63,9 +66,11 @@ from opsnest_cloud.main import (  # noqa: E402
     update_country_pack_readiness,
 )
 from opsnest_cloud.document_storage import (  # noqa: E402
+    document_storage_readiness,
     safe_filename,
     valid_document_signature,
 )
+from opsnest_cloud import document_storage  # noqa: E402
 from opsnest_cloud.desktop_release import FALLBACK_RELEASE, current_desktop_release  # noqa: E402
 
 
@@ -119,6 +124,49 @@ class CloudControlTests(unittest.TestCase):
         self.assertFalse(valid_document_signature("text/plain", b"%PDF-1.7"))
         self.assertEqual(safe_filename("../../supplier invoice?.pdf"), "supplier-invoice-.pdf")
         self.assertEqual(safe_filename("..\\..\\statement.pdf"), "statement.pdf")
+
+    def test_document_storage_readiness_requires_an_accessible_private_bucket(self) -> None:
+        configured = SimpleNamespace(document_storage_enabled=True, document_storage_bucket="opsnest-private")
+        client = MagicMock()
+        with patch.object(document_storage, "settings", configured), patch.object(document_storage, "_client", return_value=client):
+            self.assertEqual(document_storage_readiness(), "ready")
+            client.head_bucket.assert_called_once_with(Bucket="opsnest-private")
+        with patch.object(document_storage, "settings", configured), patch.object(document_storage, "_client", side_effect=RuntimeError("bucket unavailable")):
+            self.assertEqual(document_storage_readiness(), "unavailable")
+        with patch("opsnest_cloud.main.document_storage_readiness", return_value="unavailable"), TestClient(app) as client:
+            response = client.get("/health/ready")
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["status"], "not_ready")
+        self.assertEqual(response.json()["database"], "ok")
+        self.assertEqual(response.json()["document_storage"], "unavailable")
+
+    def test_workspace_never_marks_configured_but_unavailable_document_storage_ready(self) -> None:
+        db = SessionLocal()
+        workspace_id = str(uuid.uuid4())
+        member_id = str(uuid.uuid4())
+        try:
+            workspace = Workspace(
+                id=workspace_id, owner_email="storage-owner@example.test",
+                company_name="Test Company", plan_code="pro", subscription_status="active",
+            )
+            owner = WorkspaceMember(
+                id=member_id, workspace_id=workspace_id, email="storage-owner@example.test",
+                display_name="Owner", role="owner", status="active",
+            )
+            session = MemberSession(
+                id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=member_id,
+                token_hash="storage-session", expires_at=datetime.utcnow() + timedelta(days=1),
+            )
+            db.add_all([workspace, owner, session])
+            db.commit()
+            context = MemberContext(workspace=workspace, member=owner, session=session)
+            with patch("opsnest_cloud.main.document_storage_readiness", return_value="unavailable"):
+                overview = _workspace_overview(db, context)
+            documents = next(module for module in overview["modules"] if module["key"] == "documents")
+            self.assertEqual(documents["state"], "unavailable")
+            self.assertIn("safely blocked", documents["detail"])
+        finally:
+            db.close()
 
     def test_desktop_update_manifest_accepts_only_trusted_current_or_newer_release_urls(self) -> None:
         expected = dict(FALLBACK_RELEASE)

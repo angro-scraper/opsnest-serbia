@@ -39,6 +39,7 @@ from .admin_console import (
 from .desktop_release import current_desktop_release
 from .document_storage import (
     MAX_DOCUMENT_BYTES,
+    document_storage_readiness,
     document_storage_status,
     put_private_document,
     safe_filename,
@@ -547,6 +548,21 @@ def _workspace_overview(db: Session, context: MemberContext) -> dict[str, Any]:
     can_manage = context.member.role in {"owner", "administrator"}
     sync_revision = int(snapshot.revision) if snapshot else 0
     last_sync = snapshot.updated_at.isoformat(timespec="seconds") if snapshot and snapshot.updated_at else ""
+    storage_state = document_storage_readiness()
+    storage_module = {
+        "key": "documents",
+        "title": "Document Inbox",
+        "state": "ready" if storage_state == "ready" else ("configuration_required" if storage_state == "not_configured" else "unavailable"),
+        "detail": (
+            "Private PDF/image intake is ready for the configured EU document-storage bucket."
+            if storage_state == "ready"
+            else (
+                "Private PDF/image intake is ready after the EU document-storage bucket is configured."
+                if storage_state == "not_configured"
+                else "Private document storage is configured but unavailable; uploads remain safely blocked."
+            )
+        ),
+    }
     return {
         "workspace": {
             "id": workspace.id,
@@ -568,12 +584,7 @@ def _workspace_overview(db: Session, context: MemberContext) -> dict[str, Any]:
         "modules": [
             {"key": "projects", "title": "Projects and contracts", "state": "desktop", "detail": "Operational project records stay available in OpsNest Desktop."},
             {"key": "workflow", "title": "Operational work queue", "state": "ready", "detail": "Assign document checks, payments, VAT controls and reviews with comments and deadlines."},
-            {
-                "key": "documents",
-                "title": "Document Inbox",
-                "state": "ready" if bool(document_storage_status()["enabled"]) else "configuration_required",
-                "detail": "Private PDF/image intake is ready after the EU document-storage bucket is configured.",
-            },
+            storage_module,
             {"key": "money", "title": "Money and cash-flow", "state": "desktop", "detail": "Bank, cash and forecasts remain in the controlled desktop workspace."},
             {"key": "accountant", "title": "Accountant collaboration", "state": "ready" if can_manage else "member", "detail": "Team roles, access control and audit are active."},
         ],
@@ -1131,14 +1142,14 @@ def readiness(db: Session = Depends(get_session)) -> JSONResponse:
             status_code=503,
             content={"status": "not_ready", "service": "opsnest-cloud", "database": "unavailable"},
         )
-    return JSONResponse(
-        content={
-            "status": "ready",
-            "service": "opsnest-cloud",
-            "database": "ok",
-            "document_storage": "enabled" if document_storage_status()["enabled"] else "not_configured",
-        }
-    )
+    storage_state = document_storage_readiness()
+    content = {
+        "status": "ready" if storage_state != "unavailable" else "not_ready",
+        "service": "opsnest-cloud",
+        "database": "ok",
+        "document_storage": storage_state,
+    }
+    return JSONResponse(status_code=503 if storage_state == "unavailable" else 200, content=content)
 
 
 @app.get("/admin", response_class=HTMLResponse)
