@@ -102,13 +102,13 @@ services:
         value: support@opsnestone.com
       # Publish the Windows setup URL and version before each release.
       - key: DESKTOP_LATEST_VERSION
-        value: 2.13.0
+        value: 2.13.4
       - key: DESKTOP_INSTALLER_URL
-        value: https://opsnestone.com/downloads/OpsNest-Setup-2.13.0.exe
+        value: https://opsnestone.com/downloads/OpsNest-Setup-2.13.4.exe
       # Publish the SHA-256 for the same installer URL. The desktop client
       # verifies this digest before it starts any downloaded update.
       - key: DESKTOP_INSTALLER_SHA256
-        value: b9810452e3e38c54c16d0ceecc7c25d9dc7423211d19ffd8fc671093405413ed
+        value: c7a7a7dfe935c3f6b486eb6b2181cb55cfc0df4862a97ff8750da4b64eaccaac
       - key: TURNSTILE_SITE_KEY
         sync: false
       - key: TURNSTILE_SECRET_KEY

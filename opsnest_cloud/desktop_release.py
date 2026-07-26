@@ -12,9 +12,9 @@ import re
 
 
 FALLBACK_RELEASE = {
-    "latest_version": "2.13.0",
-    "installer_url": "https://opsnestone.com/downloads/OpsNest-Setup-2.13.0.exe",
-    "installer_sha256": "b9810452e3e38c54c16d0ceecc7c25d9dc7423211d19ffd8fc671093405413ed",
+    "latest_version": "2.13.4",
+    "installer_url": "https://opsnestone.com/downloads/OpsNest-Setup-2.13.4.exe",
+    "installer_sha256": "c7a7a7dfe935c3f6b486eb6b2181cb55cfc0df4862a97ff8750da4b64eaccaac",
 }
 
 
