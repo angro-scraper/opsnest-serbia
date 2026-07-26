@@ -15,8 +15,8 @@ services:
       # Public desktop-release metadata. The Windows client verifies the
       # SHA-256 before installing the downloaded update.
       - key: DESKTOP_LATEST_VERSION
-        value: 2.12.8
+        value: 2.12.9
       - key: DESKTOP_INSTALLER_URL
-        value: https://opsnestone.com/downloads/OpsNest-Setup-2.12.8.exe
+        value: https://opsnestone.com/downloads/OpsNest-Setup-2.12.9.exe
       - key: DESKTOP_INSTALLER_SHA256
-        value: a2f5079798acafc7c459b7989812d6acc7a3405a33bcd06a0d542b68990af989
+        value: 1785c7a73841e07bf94fb0a717e73b7cb3a6441d91bdb13f7ed0a0bda00d6e50
