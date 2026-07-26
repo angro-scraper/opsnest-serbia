@@ -604,6 +604,26 @@ def _workspace_control_brief(db: Session, context: MemberContext) -> dict[str, A
     today = utc_now().date()
     due_soon = today + timedelta(days=7)
     items: list[dict[str, Any]] = []
+    active_members = db.scalars(
+        select(WorkspaceMember).where(
+            WorkspaceMember.workspace_id == context.workspace.id,
+            WorkspaceMember.status == "active",
+        )
+    ).all()
+    # A finance system cannot depend on one person being present.  This is an
+    # operational prompt, not a hard access rule: firms can still work while
+    # arranging a replacement, but the owner sees the continuity gap daily.
+    if not any(member.role == "administrator" for member in active_members):
+        items.append({
+            "key": "team_continuity_missing_backup_admin",
+            "severity": "attention",
+            "count": len(active_members),
+            "target": "teamSection",
+            "title": "No active administrator backup",
+            "title_sr": "Nema aktivnog administratora-zamenika",
+            "detail": "Assign an active administrator who can continue controlled work if the owner is unavailable.",
+            "detail_sr": "Dodelite aktivnog administratora koji može nastaviti kontrolisani rad kada vlasnik nije dostupan.",
+        })
     active_work = db.scalars(
         select(WorkflowItem).where(
             WorkflowItem.workspace_id == context.workspace.id,

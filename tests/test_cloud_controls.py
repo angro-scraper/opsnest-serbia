@@ -629,7 +629,17 @@ class CloudControlTests(unittest.TestCase):
             self.assertEqual(controls["unassigned_priority_work"]["count"], 1)
             self.assertEqual(controls["country_control_blocked"]["target"], "countryReadinessSection")
             self.assertIn("financial_overview_stale", controls)
+            self.assertEqual(controls["team_continuity_missing_backup_admin"]["target"], "teamSection")
             self.assertIn("not a payment instruction", brief["disclaimer"])
+
+            backup_admin = WorkspaceMember(
+                id=str(uuid.uuid4()), workspace_id=workspace_id, email="backup@example.test",
+                display_name="Backup administrator", role="administrator", status="active",
+            )
+            db.add(backup_admin)
+            db.commit()
+            with_backup = get_workspace_control_brief(MemberContext(workspace=workspace, member=owner, session=session), db)
+            self.assertNotIn("team_continuity_missing_backup_admin", {item["key"] for item in with_backup["items"]})
         finally:
             db.close()
 
