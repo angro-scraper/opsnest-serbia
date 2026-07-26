@@ -21,6 +21,7 @@ from .config import settings
 from .database import PayPalWebhookEvent, Workspace, WorkspaceAuditEvent, WorkspaceMember
 from .security import sign_admin_session, verify_admin_session
 from .services import effective_license
+from .time_utils import utc_now
 
 
 ADMIN_COOKIE = "opsnest_admin_session"
@@ -79,7 +80,7 @@ def _license_label(status: str) -> str:
 
 def platform_overview(db: Session) -> dict[str, Any]:
     """Build a safe operational overview without reading customer accounting data."""
-    now = datetime.utcnow()
+    now = utc_now()
     workspaces = db.scalars(select(Workspace).order_by(Workspace.created_at.desc())).all()
     members = db.scalars(select(WorkspaceMember)).all()
     recent_audit = db.scalars(

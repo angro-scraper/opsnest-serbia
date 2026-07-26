@@ -22,12 +22,34 @@ ALLOWED_DOCUMENT_TYPES: Final = {
 }
 
 
-def document_storage_status() -> dict[str, object]:
+def document_storage_status(readiness: str | None = None) -> dict[str, object]:
+    """Return a safe capability status without treating configuration as readiness.
+
+    ``enabled`` is deliberately true only when the private bucket can be
+    reached.  A configured but unavailable archive must never look usable to a
+    bookkeeper, because a failed upload is not an acceptable accounting
+    workflow state.
+    """
+    current_readiness = readiness or document_storage_readiness()
     return {
-        "enabled": settings.document_storage_enabled,
+        "enabled": current_readiness == "ready",
+        "configured": settings.document_storage_enabled,
+        "state": current_readiness,
         "max_bytes": MAX_DOCUMENT_BYTES,
         "allowed_content_types": sorted(ALLOWED_DOCUMENT_TYPES),
     }
+
+
+def require_document_storage_ready() -> None:
+    """Block document operations before any file bytes are accepted or linked."""
+    state = document_storage_readiness()
+    if state == "ready":
+        return
+    if state == "not_configured":
+        detail = "Document Inbox is not enabled yet. Configure the private document-storage bucket first."
+    else:
+        detail = "Private document storage is unavailable. Uploads and download links remain safely blocked."
+    raise HTTPException(status_code=503, detail=detail)
 
 
 def document_storage_readiness() -> str:

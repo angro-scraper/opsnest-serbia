@@ -9,7 +9,7 @@ import unittest
 import uuid
 import base64
 import hashlib
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -66,12 +66,15 @@ from opsnest_cloud.main import (  # noqa: E402
     update_country_pack_readiness,
 )
 from opsnest_cloud.document_storage import (  # noqa: E402
+    document_storage_status,
     document_storage_readiness,
+    require_document_storage_ready,
     safe_filename,
     valid_document_signature,
 )
 from opsnest_cloud import document_storage  # noqa: E402
 from opsnest_cloud.desktop_release import FALLBACK_RELEASE, current_desktop_release  # noqa: E402
+from opsnest_cloud.time_utils import utc_now  # noqa: E402
 
 
 class CloudControlTests(unittest.TestCase):
@@ -140,6 +143,18 @@ class CloudControlTests(unittest.TestCase):
         self.assertEqual(response.json()["database"], "ok")
         self.assertEqual(response.json()["document_storage"], "unavailable")
 
+    def test_document_archive_never_advertises_or_accepts_work_when_bucket_is_unavailable(self) -> None:
+        configured = SimpleNamespace(document_storage_enabled=True, document_storage_bucket="opsnest-private")
+        with patch.object(document_storage, "settings", configured), patch.object(document_storage, "_client", side_effect=RuntimeError("bucket unavailable")):
+            status = document_storage_status()
+            self.assertTrue(status["configured"])
+            self.assertFalse(status["enabled"])
+            self.assertEqual(status["state"], "unavailable")
+            with self.assertRaises(HTTPException) as rejected:
+                require_document_storage_ready()
+        self.assertEqual(rejected.exception.status_code, 503)
+        self.assertIn("safely blocked", rejected.exception.detail)
+
     def test_workspace_never_marks_configured_but_unavailable_document_storage_ready(self) -> None:
         db = SessionLocal()
         workspace_id = str(uuid.uuid4())
@@ -155,7 +170,7 @@ class CloudControlTests(unittest.TestCase):
             )
             session = MemberSession(
                 id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=member_id,
-                token_hash="storage-session", expires_at=datetime.utcnow() + timedelta(days=1),
+                token_hash="storage-session", expires_at=utc_now() + timedelta(days=1),
             )
             db.add_all([workspace, owner, session])
             db.commit()
@@ -246,7 +261,7 @@ class CloudControlTests(unittest.TestCase):
                 workspace_id=workspace_id,
                 member_id=member_id,
                 token_hash="test-token",
-                expires_at=datetime.utcnow() + timedelta(days=1),
+                expires_at=utc_now() + timedelta(days=1),
             )
             db.add_all([workspace, member, session])
             db.commit()
@@ -314,11 +329,11 @@ class CloudControlTests(unittest.TestCase):
             )
             current_session = MemberSession(
                 id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=member_id,
-                token_hash="current", device_name="Owner desktop", expires_at=datetime.utcnow() + timedelta(days=1),
+                token_hash="current", device_name="Owner desktop", expires_at=utc_now() + timedelta(days=1),
             )
             stale_session = MemberSession(
                 id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=member_id,
-                token_hash="stale", device_name="Lost laptop", expires_at=datetime.utcnow() + timedelta(days=1),
+                token_hash="stale", device_name="Lost laptop", expires_at=utc_now() + timedelta(days=1),
             )
             db.add_all([workspace, owner, current_session, stale_session])
             db.commit()
@@ -364,15 +379,15 @@ class CloudControlTests(unittest.TestCase):
             )
             owner_session = MemberSession(
                 id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=owner_id,
-                token_hash="sync-owner", expires_at=datetime.utcnow() + timedelta(days=1),
+                token_hash="sync-owner", expires_at=utc_now() + timedelta(days=1),
             )
             accountant_session = MemberSession(
                 id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=accountant_id,
-                token_hash="sync-accountant", expires_at=datetime.utcnow() + timedelta(days=1),
+                token_hash="sync-accountant", expires_at=utc_now() + timedelta(days=1),
             )
             operator_session = MemberSession(
                 id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=operator_id,
-                token_hash="sync-operator", expires_at=datetime.utcnow() + timedelta(days=1),
+                token_hash="sync-operator", expires_at=utc_now() + timedelta(days=1),
             )
             db.add_all([workspace, owner, accountant, operator, owner_session, accountant_session, operator_session])
             db.commit()
@@ -430,11 +445,11 @@ class CloudControlTests(unittest.TestCase):
             )
             accountant_session = MemberSession(
                 id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=accountant_id,
-                token_hash="finance-accountant", expires_at=datetime.utcnow() + timedelta(days=1),
+                token_hash="finance-accountant", expires_at=utc_now() + timedelta(days=1),
             )
             project_session = MemberSession(
                 id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=project_manager_id,
-                token_hash="finance-project", expires_at=datetime.utcnow() + timedelta(days=1),
+                token_hash="finance-project", expires_at=utc_now() + timedelta(days=1),
             )
             db.add_all([workspace, accountant, project_manager, accountant_session, project_session])
             db.commit()
@@ -480,15 +495,15 @@ class CloudControlTests(unittest.TestCase):
             )
             accountant_session = MemberSession(
                 id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=accountant_id,
-                token_hash="documents-accountant", expires_at=datetime.utcnow() + timedelta(days=1),
+                token_hash="documents-accountant", expires_at=utc_now() + timedelta(days=1),
             )
             project_session = MemberSession(
                 id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=project_manager_id,
-                token_hash="documents-project", expires_at=datetime.utcnow() + timedelta(days=1),
+                token_hash="documents-project", expires_at=utc_now() + timedelta(days=1),
             )
             operator_session = MemberSession(
                 id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=operator_id,
-                token_hash="documents-operator", expires_at=datetime.utcnow() + timedelta(days=1),
+                token_hash="documents-operator", expires_at=utc_now() + timedelta(days=1),
             )
             invoice = WorkspaceDocument(
                 id=str(uuid.uuid4()), workspace_id=workspace_id, uploaded_by_member_id=accountant_id,
@@ -543,7 +558,7 @@ class CloudControlTests(unittest.TestCase):
             )
             session = MemberSession(
                 id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=member_id,
-                token_hash="audit-session", expires_at=datetime.utcnow() + timedelta(days=1),
+                token_hash="audit-session", expires_at=utc_now() + timedelta(days=1),
             )
             db.add_all([workspace, owner, session])
             _record_audit(
@@ -570,7 +585,7 @@ class CloudControlTests(unittest.TestCase):
         db = SessionLocal()
         workspace_id = str(uuid.uuid4())
         member_id = str(uuid.uuid4())
-        yesterday = (datetime.utcnow() - timedelta(days=1)).date().isoformat()
+        yesterday = (utc_now() - timedelta(days=1)).date().isoformat()
         try:
             workspace = Workspace(
                 id=workspace_id,
@@ -589,7 +604,7 @@ class CloudControlTests(unittest.TestCase):
             )
             session = MemberSession(
                 id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=member_id,
-                token_hash="brief-session", expires_at=datetime.utcnow() + timedelta(days=1),
+                token_hash="brief-session", expires_at=utc_now() + timedelta(days=1),
             )
             overdue = WorkflowItem(
                 id=str(uuid.uuid4()), workspace_id=workspace_id, title="Reconcile bank",
@@ -603,7 +618,7 @@ class CloudControlTests(unittest.TestCase):
                 workspace_id=workspace_id,
                 currency="RSD",
                 summary_json="{}",
-                updated_at=datetime.utcnow() - timedelta(hours=25),
+                updated_at=utc_now() - timedelta(hours=25),
             )
             db.add_all([workspace, owner, session, overdue, blocked, overview])
             db.commit()
@@ -639,7 +654,7 @@ class CloudControlTests(unittest.TestCase):
             )
             session = MemberSession(
                 id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=member_id,
-                token_hash="return-session", expires_at=datetime.utcnow() + timedelta(days=1),
+                token_hash="return-session", expires_at=utc_now() + timedelta(days=1),
             )
             item = WorkflowItem(
                 id=str(uuid.uuid4()), workspace_id=workspace_id, title="Review supplier document",

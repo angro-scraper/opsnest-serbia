@@ -37,11 +37,13 @@ from .admin_console import (
     verify_admin_credentials,
 )
 from .desktop_release import current_desktop_release
+from .time_utils import utc_now
 from .document_storage import (
     MAX_DOCUMENT_BYTES,
     document_storage_readiness,
     document_storage_status,
     put_private_document,
+    require_document_storage_ready,
     safe_filename,
     signed_document_download,
     valid_document_signature,
@@ -599,7 +601,7 @@ def _workspace_control_brief(db: Session, context: MemberContext) -> dict[str, A
     the aggregate desktop summary. It neither creates payments nor treats a
     result as a legal, tax or statutory-compliance decision.
     """
-    today = datetime.utcnow().date()
+    today = utc_now().date()
     due_soon = today + timedelta(days=7)
     items: list[dict[str, Any]] = []
     active_work = db.scalars(
@@ -715,7 +717,7 @@ def _workspace_control_brief(db: Session, context: MemberContext) -> dict[str, A
             "detail": "Synchronize aggregate totals before relying on the finance control board.",
             "detail_sr": "Sinhronizujte zbirne iznose pre oslanjanja na finansijsku kontrolnu tablu.",
         })
-    elif not overview.updated_at or overview.updated_at < datetime.utcnow() - timedelta(hours=24):
+    elif not overview.updated_at or overview.updated_at < utc_now() - timedelta(hours=24):
         items.append({
             "key": "financial_overview_stale",
             "severity": "watch",
@@ -739,7 +741,7 @@ def _workspace_control_brief(db: Session, context: MemberContext) -> dict[str, A
             "detail_sr": "Nastavite redovan ciklus provere vlasnika i knjigovođe.",
         })
     return {
-        "generated_at": datetime.utcnow().isoformat(timespec="seconds"),
+        "generated_at": utc_now().isoformat(timespec="seconds"),
         "items": items,
         "disclaimer": "This is an operational prompt, not a payment instruction, accounting posting, tax filing or compliance decision.",
         "disclaimer_sr": "Ovo je operativni podsetnik, a ne nalog za plaćanje, knjiženje, poreska prijava niti odluka o usklađenosti.",
@@ -905,7 +907,7 @@ def _team_seats_used(db: Session, workspace_id: str) -> int:
 
 def _new_member_session(db: Session, member: WorkspaceMember, device_name: str) -> dict[str, str]:
     token = new_member_session_token()
-    now = datetime.utcnow()
+    now = utc_now()
     session = MemberSession(
         id=str(uuid.uuid4()),
         workspace_id=member.workspace_id,
@@ -951,10 +953,10 @@ def _member_dependency(
         or not session
         or member.workspace_id != normalized_workspace_id
         or member.status != "active"
-        or session.expires_at <= datetime.utcnow()
+        or session.expires_at <= utc_now()
     ):
         raise HTTPException(status_code=401, detail="Invalid or expired team session.")
-    session.last_seen_at = datetime.utcnow()
+    session.last_seen_at = utc_now()
     db.commit()
     return MemberContext(workspace=workspace, member=member, session=session)
 
@@ -1035,7 +1037,7 @@ def _document_access(context: MemberContext, document_type: str = "") -> dict[st
 def _limit_desktop_activation(remote_ip: str) -> None:
     """Desktop sign-up has no browser CAPTCHA, so strictly limit code requests."""
     identifier = remote_ip.strip() or "unknown"
-    now = datetime.utcnow()
+    now = utc_now()
     with _desktop_activation_lock:
         attempts = _desktop_activation_attempts[identifier]
         cutoff = now - _DESKTOP_ACTIVATION_WINDOW
@@ -1051,7 +1053,7 @@ def _limit_desktop_activation(remote_ip: str) -> None:
 
 def _limit_ai_advice(workspace_id: str) -> None:
     """Bound model spend per workspace without retaining any financial data."""
-    now = datetime.utcnow()
+    now = utc_now()
     with _ai_advice_lock:
         attempts = _ai_advice_attempts[workspace_id]
         cutoff = now - _AI_ADVICE_WINDOW
@@ -1288,7 +1290,7 @@ def request_email_code(
         .where(EmailChallenge.workspace_id == workspace_id, EmailChallenge.email == email)
         .order_by(EmailChallenge.created_at.desc())
     )
-    if latest and latest.created_at > datetime.utcnow() - timedelta(seconds=60):
+    if latest and latest.created_at > utc_now() - timedelta(seconds=60):
         raise HTTPException(status_code=429, detail="Wait one minute before requesting another verification code.")
 
     code = new_email_code()
@@ -1297,7 +1299,7 @@ def request_email_code(
         workspace_id=workspace_id,
         email=email,
         code_hash=secret_hash(code),
-        expires_at=datetime.utcnow() + timedelta(minutes=15),
+        expires_at=utc_now() + timedelta(minutes=15),
     )
     db.add(challenge)
     try:
@@ -1322,7 +1324,7 @@ def confirm_email_code(payload: ConfirmEmailCode, db: Session = Depends(get_sess
         .where(EmailChallenge.workspace_id == workspace_id, EmailChallenge.email == email, EmailChallenge.used_at.is_(None))
         .order_by(EmailChallenge.created_at.desc())
     )
-    if not challenge or challenge.expires_at <= datetime.utcnow():
+    if not challenge or challenge.expires_at <= utc_now():
         raise HTTPException(status_code=400, detail="Verification code expired. Request a new code.")
     if challenge.attempts >= 5:
         raise HTTPException(status_code=429, detail="Too many attempts. Request a new code.")
@@ -1334,14 +1336,14 @@ def confirm_email_code(payload: ConfirmEmailCode, db: Session = Depends(get_sess
     workspace = db.get(Workspace, workspace_id)
     if not workspace:
         raise HTTPException(status_code=404, detail="Workspace not found.")
-    challenge.used_at = datetime.utcnow()
-    workspace.email_verified_at = datetime.utcnow()
+    challenge.used_at = utc_now()
+    workspace.email_verified_at = utc_now()
     # The trial starts at registration confirmation, not when a user later opens billing.
     if not workspace.trial_started_at:
         start_trial(workspace)
     token = new_client_token()
     workspace.client_token_hash = secret_hash(token)
-    workspace.last_verified_at = datetime.utcnow()
+    workspace.last_verified_at = utc_now()
     owner = _ensure_owner_member(db, workspace)
     _record_audit(
         db,
@@ -1389,7 +1391,7 @@ def ai_financial_advice(
     db.commit()
     return {
         "advice": advice,
-        "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "generated_at": utc_now().isoformat(timespec="seconds") + "Z",
         "requests_remaining": remaining,
     }
 
@@ -1455,7 +1457,7 @@ def list_team_sessions(
         .where(
             MemberSession.workspace_id == context.workspace.id,
             MemberSession.revoked_at.is_(None),
-            MemberSession.expires_at > datetime.utcnow(),
+            MemberSession.expires_at > utc_now(),
         )
         .order_by(MemberSession.last_seen_at.desc(), MemberSession.created_at.desc())
         .limit(100)
@@ -1483,7 +1485,7 @@ def revoke_team_session(
     )
     if not session:
         raise HTTPException(status_code=404, detail="Active device session was not found.")
-    session.revoked_at = datetime.utcnow()
+    session.revoked_at = utc_now()
     _record_audit(
         db,
         workspace_id=context.workspace.id,
@@ -1526,7 +1528,7 @@ def invite_team_member(
             TeamInvitation.workspace_id == workspace.id,
             TeamInvitation.email == email,
             TeamInvitation.accepted_at.is_(None),
-            TeamInvitation.expires_at > datetime.utcnow(),
+            TeamInvitation.expires_at > utc_now(),
         )
         .order_by(TeamInvitation.created_at.desc())
     )
@@ -1541,7 +1543,7 @@ def invite_team_member(
         role=role,
         code_hash=secret_hash(code),
         invited_by_member_id=context.member.id,
-        expires_at=datetime.utcnow() + timedelta(hours=TEAM_INVITATION_HOURS),
+        expires_at=utc_now() + timedelta(hours=TEAM_INVITATION_HOURS),
     )
     if existing:
         existing.display_name = invitation.display_name or existing.display_name
@@ -1591,7 +1593,7 @@ def accept_team_invitation(payload: AcceptTeamInvitation, db: Session = Depends(
         .where(
             TeamInvitation.email == email,
             TeamInvitation.accepted_at.is_(None),
-            TeamInvitation.expires_at > datetime.utcnow(),
+            TeamInvitation.expires_at > utc_now(),
         )
         .order_by(TeamInvitation.created_at.desc())
     ).all()
@@ -1614,7 +1616,7 @@ def accept_team_invitation(payload: AcceptTeamInvitation, db: Session = Depends(
     member.display_name = invitation.display_name or member.display_name or email.split("@", 1)[0]
     member.role = invitation.role
     member.status = "active"
-    invitation.accepted_at = datetime.utcnow()
+    invitation.accepted_at = utc_now()
     _record_audit(
         db,
         workspace_id=workspace.id,
@@ -1658,7 +1660,7 @@ def revoke_team_member(
         )
     ).all()
     for session in sessions:
-        session.revoked_at = datetime.utcnow()
+        session.revoked_at = utc_now()
     _record_audit(
         db,
         workspace_id=workspace.id,
@@ -1731,7 +1733,7 @@ def request_team_password_reset(
         .where(PasswordResetChallenge.workspace_id == workspace_id, PasswordResetChallenge.email == email)
         .order_by(PasswordResetChallenge.created_at.desc())
     )
-    if latest and latest.created_at > datetime.utcnow() - timedelta(seconds=60):
+    if latest and latest.created_at > utc_now() - timedelta(seconds=60):
         raise HTTPException(status_code=429, detail="Wait one minute before requesting another recovery code.")
     code = new_email_code()
     challenge = PasswordResetChallenge(
@@ -1740,7 +1742,7 @@ def request_team_password_reset(
         member_id=member.id,
         email=email,
         code_hash=secret_hash(code),
-        expires_at=datetime.utcnow() + timedelta(minutes=15),
+        expires_at=utc_now() + timedelta(minutes=15),
     )
     db.add(challenge)
     try:
@@ -1772,7 +1774,7 @@ def confirm_team_password_reset(
         )
         .order_by(PasswordResetChallenge.created_at.desc())
     )
-    if not challenge or challenge.expires_at <= datetime.utcnow():
+    if not challenge or challenge.expires_at <= utc_now():
         raise HTTPException(status_code=400, detail="Recovery code expired. Request a new code.")
     if challenge.attempts >= 5:
         raise HTTPException(status_code=429, detail="Too many attempts. Request a new recovery code.")
@@ -1784,7 +1786,7 @@ def confirm_team_password_reset(
     workspace = db.get(Workspace, workspace_id)
     if not workspace or not member or member.workspace_id != workspace_id or member.status != "active":
         raise HTTPException(status_code=400, detail="This account can no longer reset its password.")
-    challenge.used_at = datetime.utcnow()
+    challenge.used_at = utc_now()
     member.password_hash = password_hash(payload.password)
     active_sessions = db.scalars(
         select(MemberSession).where(
@@ -1794,7 +1796,7 @@ def confirm_team_password_reset(
         )
     ).all()
     for session in active_sessions:
-        session.revoked_at = datetime.utcnow()
+        session.revoked_at = utc_now()
     _record_audit(
         db,
         workspace_id=workspace_id,
@@ -2101,7 +2103,7 @@ def update_workflow_item(
     item.priority = _normalize_workflow_option(payload.priority, WORKFLOW_PRIORITIES, "priority")
     item.due_date = _normalize_workflow_due_date(payload.due_date)
     item.assigned_member_id = assignee.id if assignee else ""
-    item.closed_at = datetime.utcnow() if item.status == "done" else None
+    item.closed_at = utc_now() if item.status == "done" else None
     if return_comment:
         db.add(
             WorkflowComment(
@@ -2205,6 +2207,7 @@ def list_workspace_documents(
     db: Session = Depends(get_session),
 ) -> dict[str, Any]:
     access = _document_access(context)
+    storage = document_storage_status()
     documents = db.scalars(
         select(WorkspaceDocument)
         .where(WorkspaceDocument.workspace_id == context.workspace.id)
@@ -2212,7 +2215,7 @@ def list_workspace_documents(
         .limit(200)
     ).all()
     return {
-        "storage": document_storage_status(),
+        "storage": storage,
         "permissions": access,
         "documents": [
             _serialize_workspace_document(db, document)
@@ -2233,6 +2236,9 @@ async def upload_workspace_document(
     """Store an allowed PDF/image in private object storage and keep only metadata in SQL."""
     normalized_type = _normalize_workflow_option(document_type, DOCUMENT_TYPES, "document type")
     _document_access(context, normalized_type)
+    # Do this before reading a multipart body so unavailable storage does not
+    # look like a failed accounting upload and does not consume file memory.
+    require_document_storage_ready()
     content_type = str(file.content_type or "").lower().strip()
     original_filename = safe_filename(file.filename or "document")
     content = await file.read(MAX_DOCUMENT_BYTES + 1)
@@ -2290,6 +2296,7 @@ def download_workspace_document(
     if not document:
         raise HTTPException(status_code=404, detail="Document not found.")
     _document_access(context, document.document_type)
+    require_document_storage_ready()
     _record_audit(
         db,
         workspace_id=context.workspace.id,
@@ -2367,7 +2374,7 @@ def upload_team_snapshot(
     snapshot.snapshot_b64 = _encrypt_workspace_snapshot(raw_snapshot)
     snapshot.sha256 = incoming_sha256
     snapshot.updated_by_member_id = context.member.id
-    snapshot.updated_at = datetime.utcnow()
+    snapshot.updated_at = utc_now()
     _record_audit(
         db,
         workspace_id=context.workspace.id,
@@ -2485,7 +2492,7 @@ def export_team_audit_evidence(
     writer = csv.writer(output, lineterminator="\n")
     writer.writerow(["OpsNest operational audit evidence"])
     writer.writerow(["workspace_id", context.workspace.id])
-    writer.writerow(["exported_at_utc", datetime.utcnow().isoformat(timespec="seconds")])
+    writer.writerow(["exported_at_utc", utc_now().isoformat(timespec="seconds")])
     writer.writerow(["integrity", "verified"])
     writer.writerow(["event_count", integrity["count"]])
     writer.writerow(["chain_last_hash", integrity["last_hash"]])
@@ -2501,7 +2508,7 @@ def export_team_audit_evidence(
             event.previous_hash,
             event.entry_hash,
         ])
-    filename = "opsnest-audit-evidence-" + datetime.utcnow().strftime("%Y%m%d-%H%M%S") + ".csv"
+    filename = "opsnest-audit-evidence-" + utc_now().strftime("%Y%m%d-%H%M%S") + ".csv"
     return Response(
         content="\ufeff" + output.getvalue(),
         media_type="text/csv; charset=utf-8",
@@ -2623,12 +2630,12 @@ def record_paypal_approval(payload: RecordPayPalApproval, db: Session = Depends(
         workspace.ai_advisor_tier = str(checkout["plan_code"])
         workspace.ai_advisor_status = "active" if str(paypal_subscription.get("status") or "").upper() == "ACTIVE" else "pending"
         workspace.ai_advisor_requests_used = 0
-        workspace.ai_advisor_period_started_at = datetime.utcnow()
+        workspace.ai_advisor_period_started_at = utc_now()
     else:
         workspace.paypal_subscription_id = payload.subscription_id
         workspace.billing_provider = "paypal"
         workspace.plan_code = str(checkout["plan_code"])
-    workspace.last_verified_at = datetime.utcnow()
+    workspace.last_verified_at = utc_now()
     if not is_ai_addon and str(paypal_subscription.get("status") or "").upper() == "ACTIVE":
         workspace.subscription_status = "active"
     db.commit()
@@ -2666,12 +2673,12 @@ async def paypal_webhook(request: Request, db: Session = Depends(get_session)) -
             ai_workspace.ai_advisor_status = "active"
             if event_type == "BILLING.SUBSCRIPTION.ACTIVATED":
                 ai_workspace.ai_advisor_requests_used = 0
-                ai_workspace.ai_advisor_period_started_at = datetime.utcnow()
+                ai_workspace.ai_advisor_period_started_at = utc_now()
         elif event_type in {"BILLING.SUBSCRIPTION.PAYMENT.FAILED", "BILLING.SUBSCRIPTION.SUSPENDED"}:
             ai_workspace.ai_advisor_status = "past_due"
         elif event_type in {"BILLING.SUBSCRIPTION.CANCELLED", "BILLING.SUBSCRIPTION.EXPIRED"}:
             ai_workspace.ai_advisor_status = "cancelled"
-        ai_workspace.last_verified_at = datetime.utcnow()
+        ai_workspace.last_verified_at = utc_now()
     if workspace:
         if event_type in {"BILLING.SUBSCRIPTION.ACTIVATED", "PAYMENT.SALE.COMPLETED"}:
             workspace.subscription_status = "active"
@@ -2683,7 +2690,7 @@ async def paypal_webhook(request: Request, db: Session = Depends(get_session)) -
             workspace.subscription_status = "cancelled"
         elif event_type == "BILLING.SUBSCRIPTION.EXPIRED":
             workspace.subscription_status = "expired"
-        workspace.last_verified_at = datetime.utcnow()
+        workspace.last_verified_at = utc_now()
     db.commit()
     return {"ok": True}
 

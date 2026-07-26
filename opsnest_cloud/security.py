@@ -5,7 +5,7 @@ import hashlib
 import hmac
 import json
 import secrets
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .config import settings
@@ -62,7 +62,7 @@ def sign_checkout_session(workspace_id: str, plan_code: str, *, expires_in_minut
     payload = {
         "workspace_id": workspace_id,
         "plan_code": plan_code,
-        "expires_at": int((datetime.utcnow() + timedelta(minutes=expires_in_minutes)).timestamp()),
+        "expires_at": int((datetime.now(UTC) + timedelta(minutes=expires_in_minutes)).timestamp()),
     }
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     signature = hmac.new(settings.signing_secret.encode("utf-8"), raw, hashlib.sha256).digest()
@@ -78,7 +78,7 @@ def verify_checkout_session(value: str) -> dict[str, Any] | None:
         if not hmac.compare_digest(provided, expected):
             return None
         payload = json.loads(raw.decode("utf-8"))
-        if int(payload.get("expires_at") or 0) < int(datetime.utcnow().timestamp()):
+        if int(payload.get("expires_at") or 0) < int(datetime.now(UTC).timestamp()):
             return None
         if not payload.get("workspace_id") or not payload.get("plan_code"):
             return None
@@ -92,7 +92,7 @@ def sign_admin_session(email: str, *, expires_in_hours: int = 12) -> str:
     payload = {
         "scope": "opsnest_admin",
         "email": str(email or "").strip().lower(),
-        "expires_at": int((datetime.utcnow() + timedelta(hours=expires_in_hours)).timestamp()),
+        "expires_at": int((datetime.now(UTC) + timedelta(hours=expires_in_hours)).timestamp()),
     }
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     signature = hmac.new(settings.signing_secret.encode("utf-8"), raw, hashlib.sha256).digest()
@@ -109,7 +109,7 @@ def verify_admin_session(value: str) -> dict[str, Any] | None:
         if not hmac.compare_digest(provided, expected):
             return None
         payload = json.loads(raw.decode("utf-8"))
-        if payload.get("scope") != "opsnest_admin" or int(payload.get("expires_at") or 0) < int(datetime.utcnow().timestamp()):
+        if payload.get("scope") != "opsnest_admin" or int(payload.get("expires_at") or 0) < int(datetime.now(UTC).timestamp()):
             return None
         if not str(payload.get("email") or "").strip():
             return None

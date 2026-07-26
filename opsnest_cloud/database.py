@@ -8,6 +8,7 @@ from sqlalchemy import DateTime, Integer, String, Text, UniqueConstraint, create
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from .config import settings
+from .time_utils import utc_now
 
 
 engine_options: dict[str, object] = {"pool_pre_ping": True}
@@ -50,8 +51,8 @@ class Workspace(Base):
     ai_advisor_period_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
     billing_provider: Mapped[str] = mapped_column(String(32), default="")
     last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=utc_now, onupdate=utc_now)
 
 
 class EmailChallenge(Base):
@@ -64,7 +65,7 @@ class EmailChallenge(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=False))
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=utc_now)
 
 
 class PayPalWebhookEvent(Base):
@@ -74,7 +75,7 @@ class PayPalWebhookEvent(Base):
     event_type: Mapped[str] = mapped_column(String(100), index=True)
     subscription_id: Mapped[str] = mapped_column(String(128), default="", index=True)
     payload_json: Mapped[str] = mapped_column(Text, default="{}")
-    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=utc_now)
 
 
 class WorkspaceMember(Base):
@@ -92,8 +93,8 @@ class WorkspaceMember(Base):
     password_hash: Mapped[str] = mapped_column(Text, default="")
     invited_by_member_id: Mapped[str] = mapped_column(String(36), default="")
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=utc_now, onupdate=utc_now)
 
 
 class TeamInvitation(Base):
@@ -110,7 +111,7 @@ class TeamInvitation(Base):
     invited_by_member_id: Mapped[str] = mapped_column(String(36), default="")
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=False))
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=utc_now)
 
 
 class PasswordResetChallenge(Base):
@@ -126,7 +127,7 @@ class PasswordResetChallenge(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=False))
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=utc_now)
 
 
 class MemberSession(Base):
@@ -141,8 +142,8 @@ class MemberSession(Base):
     device_name: Mapped[str] = mapped_column(String(160), default="OpsNest Desktop")
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
-    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=utc_now)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=utc_now)
 
 
 class WorkspaceAuditEvent(Base):
@@ -162,7 +163,7 @@ class WorkspaceAuditEvent(Base):
     entity_type: Mapped[str] = mapped_column(String(80), default="")
     entity_id: Mapped[str] = mapped_column(String(80), default="")
     details_json: Mapped[str] = mapped_column(Text, default="{}")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=utc_now, index=True)
     previous_hash: Mapped[str] = mapped_column(String(64), default="")
     entry_hash: Mapped[str] = mapped_column(String(64), default="", index=True)
 
@@ -182,8 +183,8 @@ class WorkflowItem(Base):
     assigned_member_id: Mapped[str] = mapped_column(String(36), default="", index=True)
     created_by_member_id: Mapped[str] = mapped_column(String(36), default="", index=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow, index=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=utc_now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=utc_now, onupdate=utc_now)
 
 
 class WorkflowComment(Base):
@@ -196,7 +197,7 @@ class WorkflowComment(Base):
     workflow_item_id: Mapped[str] = mapped_column(String(36), index=True)
     author_member_id: Mapped[str] = mapped_column(String(36), index=True)
     body: Mapped[str] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=utc_now, index=True)
 
 
 class WorkspaceDocument(Base):
@@ -214,7 +215,7 @@ class WorkspaceDocument(Base):
     byte_size: Mapped[int] = mapped_column(Integer)
     sha256: Mapped[str] = mapped_column(String(64), index=True)
     storage_key: Mapped[str] = mapped_column(String(512), unique=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=utc_now, index=True)
 
 
 class WorkspaceFinancialOverview(Base):
@@ -232,7 +233,7 @@ class WorkspaceFinancialOverview(Base):
     horizon_days: Mapped[int] = mapped_column(Integer, default=90)
     summary_json: Mapped[str] = mapped_column(Text, default="{}")
     updated_by_member_id: Mapped[str] = mapped_column(String(36), default="")
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=utc_now, onupdate=utc_now)
 
 
 class CountryPackControl(Base):
@@ -256,7 +257,7 @@ class CountryPackControl(Base):
     owner_member_id: Mapped[str] = mapped_column(String(36), default="", index=True)
     note: Mapped[str] = mapped_column(Text, default="")
     updated_by_member_id: Mapped[str] = mapped_column(String(36), default="", index=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=utc_now, onupdate=utc_now)
 
 
 class WorkspaceSyncSnapshot(Base):
@@ -269,7 +270,7 @@ class WorkspaceSyncSnapshot(Base):
     snapshot_b64: Mapped[str] = mapped_column(Text, default="")
     sha256: Mapped[str] = mapped_column(String(64), default="")
     updated_by_member_id: Mapped[str] = mapped_column(String(36), default="")
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=utc_now, onupdate=utc_now)
 
 
 def create_schema() -> None:

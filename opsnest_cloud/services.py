@@ -14,6 +14,7 @@ from fastapi import HTTPException
 
 from .config import settings
 from .database import Workspace
+from .time_utils import utc_now
 from opsnest_plans import AI_ADVISOR_ADDONS, TRIAL_DAYS, effective_plan_code, normalize_plan_code, plan_details
 
 
@@ -27,7 +28,7 @@ def is_founder_workspace(workspace: Workspace) -> bool:
 
 
 def effective_license(workspace: Workspace, *, now: datetime | None = None) -> dict[str, Any]:
-    reference = now or datetime.utcnow()
+    reference = now or utc_now()
     status = str(workspace.subscription_status or "verification_pending").lower()
     days_remaining = 0
     founder_access = is_founder_workspace(workspace)
@@ -78,7 +79,7 @@ def effective_license(workspace: Workspace, *, now: datetime | None = None) -> d
 
 def consume_ai_advisor_request(workspace: Workspace, *, now: datetime | None = None) -> int:
     """Consume one included request after a successful response is generated."""
-    reference = now or datetime.utcnow()
+    reference = now or utc_now()
     tier = AI_ADVISOR_ADDONS.get("ai_pro" if is_founder_workspace(workspace) else str(workspace.ai_advisor_tier or "").lower())
     if not tier or not (is_founder_workspace(workspace) or str(workspace.ai_advisor_status or "").lower() == "active"):
         raise HTTPException(status_code=403, detail="AI financial adviser requires the AI Adviser add-on.")
@@ -94,7 +95,7 @@ def consume_ai_advisor_request(workspace: Workspace, *, now: datetime | None = N
 
 
 def start_trial(workspace: Workspace) -> None:
-    now = datetime.utcnow()
+    now = utc_now()
     workspace.trial_started_at = now
     workspace.trial_ends_at = now + timedelta(days=TRIAL_DAYS)
     workspace.subscription_status = "trial"
