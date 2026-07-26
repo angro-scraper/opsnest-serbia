@@ -33,6 +33,7 @@ from opsnest_cloud.database import (  # noqa: E402
     WorkspaceFinancialOverview,
     WorkspaceMember,
     WorkspaceSyncSnapshot,
+    WorkspaceDocument,
     WorkflowComment,
     WorkflowItem,
     create_schema,
@@ -46,6 +47,7 @@ from opsnest_cloud.main import (  # noqa: E402
     export_team_audit_evidence,
     FinancialOverviewUpload,
     get_workspace_financial_overview,
+    list_workspace_documents,
     get_workspace_control_brief,
     app,
     download_team_snapshot,
@@ -324,6 +326,72 @@ class CloudControlTests(unittest.TestCase):
                 upload_workspace_financial_overview(payload, project_context, db)
             self.assertEqual(write_rejected.exception.status_code, 403)
             self.assertTrue(_verify_workspace_audit_chain(db, workspace_id)["ok"])
+        finally:
+            db.close()
+
+    def test_document_archive_separates_finance_from_project_document_access(self) -> None:
+        db = SessionLocal()
+        workspace_id = str(uuid.uuid4())
+        accountant_id = str(uuid.uuid4())
+        project_manager_id = str(uuid.uuid4())
+        operator_id = str(uuid.uuid4())
+        try:
+            workspace = Workspace(
+                id=workspace_id, owner_email="documents-owner@example.test",
+                company_name="Test Company", plan_code="pro", subscription_status="active",
+            )
+            accountant = WorkspaceMember(
+                id=accountant_id, workspace_id=workspace_id, email="documents-accountant@example.test",
+                display_name="Accountant", role="accountant", status="active",
+            )
+            project_manager = WorkspaceMember(
+                id=project_manager_id, workspace_id=workspace_id, email="documents-project@example.test",
+                display_name="Project manager", role="project_manager", status="active",
+            )
+            operator = WorkspaceMember(
+                id=operator_id, workspace_id=workspace_id, email="documents-operator@example.test",
+                display_name="Operator", role="operator", status="active",
+            )
+            accountant_session = MemberSession(
+                id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=accountant_id,
+                token_hash="documents-accountant", expires_at=datetime.utcnow() + timedelta(days=1),
+            )
+            project_session = MemberSession(
+                id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=project_manager_id,
+                token_hash="documents-project", expires_at=datetime.utcnow() + timedelta(days=1),
+            )
+            operator_session = MemberSession(
+                id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=operator_id,
+                token_hash="documents-operator", expires_at=datetime.utcnow() + timedelta(days=1),
+            )
+            invoice = WorkspaceDocument(
+                id=str(uuid.uuid4()), workspace_id=workspace_id, uploaded_by_member_id=accountant_id,
+                document_type="invoice", original_filename="supplier-invoice.pdf", content_type="application/pdf",
+                byte_size=42, sha256="a" * 64, storage_key=f"test/{uuid.uuid4()}",
+            )
+            contract = WorkspaceDocument(
+                id=str(uuid.uuid4()), workspace_id=workspace_id, uploaded_by_member_id=project_manager_id,
+                document_type="contract", original_filename="project-contract.pdf", content_type="application/pdf",
+                byte_size=42, sha256="b" * 64, storage_key=f"test/{uuid.uuid4()}",
+            )
+            db.add_all([
+                workspace, accountant, project_manager, operator,
+                accountant_session, project_session, operator_session, invoice, contract,
+            ])
+            db.commit()
+            accountant_context = MemberContext(workspace=workspace, member=accountant, session=accountant_session)
+            project_context = MemberContext(workspace=workspace, member=project_manager, session=project_session)
+            operator_context = MemberContext(workspace=workspace, member=operator, session=operator_session)
+
+            accountant_documents = list_workspace_documents(accountant_context, db)
+            self.assertEqual({item["original_filename"] for item in accountant_documents["documents"]}, {"supplier-invoice.pdf", "project-contract.pdf"})
+            self.assertEqual(set(accountant_documents["permissions"]["visible_document_types"]), {"invoice", "receipt", "contract", "statement", "other"})
+            project_documents = list_workspace_documents(project_context, db)
+            self.assertEqual([item["original_filename"] for item in project_documents["documents"]], ["project-contract.pdf"])
+            self.assertEqual(project_documents["permissions"]["visible_document_types"], ["contract", "other"])
+            with self.assertRaises(HTTPException) as rejected:
+                list_workspace_documents(operator_context, db)
+            self.assertEqual(rejected.exception.status_code, 403)
         finally:
             db.close()
 

@@ -94,6 +94,15 @@ cash-flow, payable, receivable and profit totals. Project managers and
 operators can still manage their assigned work, documents and operational
 tasks, but cannot see or overwrite company-wide finance aggregates.
 
+The Document Inbox applies the same least-privilege boundary before storage is
+enabled: financial invoices, receipts and bank statements are visible and
+uploadable only to the owner, administrator and accountant. A project manager
+can work with contracts and project attachments, while an operator cannot
+open the archive. Every actual document download-link request is already
+recorded in the workspace audit trail. This access model is a platform control,
+not a substitute for a company retention policy or country-specific archive
+requirements.
+
 The portal also provides password recovery for an active team account. A
 six-digit recovery code is sent only to the member's registered business
 e-mail, expires after 15 minutes, accepts at most five attempts and revokes

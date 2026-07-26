@@ -156,6 +156,9 @@ WORKFLOW_PRIORITIES = {"low", "normal", "high", "urgent"}
 WORKFLOW_MANAGER_ROLES = {"owner", "administrator", "project_manager", "accountant"}
 FINANCE_ROLES = {"owner", "administrator", "accountant"}
 DOCUMENT_TYPES = {"invoice", "receipt", "contract", "statement", "other"}
+FINANCIAL_DOCUMENT_TYPES = {"invoice", "receipt", "statement"}
+PROJECT_DOCUMENT_TYPES = {"contract", "other"}
+DOCUMENT_REVIEW_ROLES = FINANCE_ROLES | {"project_manager"}
 COUNTRY_PACK_CONTROL_STATUSES = {"not_started", "in_review", "ready", "blocked", "not_applicable"}
 COUNTRY_PACKS = {
     "RS": {"label": "Serbia", "currency": "RSD", "stage": "SEF and VAT workspace"},
@@ -969,6 +972,21 @@ def _require_finance_role(context: MemberContext) -> MemberContext:
     return _require_team_role(context, *FINANCE_ROLES)
 
 
+def _document_access(context: MemberContext, document_type: str = "") -> dict[str, Any]:
+    """Return the least-privilege document scope for the current team role."""
+    role = context.member.role
+    if role in FINANCE_ROLES:
+        allowed_types = DOCUMENT_TYPES
+    elif role == "project_manager":
+        allowed_types = PROJECT_DOCUMENT_TYPES
+    else:
+        raise HTTPException(status_code=403, detail="This team role is not allowed to access the document archive.")
+    normalized_type = str(document_type or "").strip().lower()
+    if normalized_type and normalized_type not in allowed_types:
+        raise HTTPException(status_code=403, detail="This team role is not allowed to access that document type.")
+    return {"can_upload": role in DOCUMENT_REVIEW_ROLES, "visible_document_types": sorted(allowed_types)}
+
+
 def _limit_desktop_activation(remote_ip: str) -> None:
     """Desktop sign-up has no browser CAPTCHA, so strictly limit code requests."""
     identifier = remote_ip.strip() or "unknown"
@@ -1755,7 +1773,7 @@ def team_me(context: MemberContext = Depends(_member_dependency)) -> dict[str, A
             "manage_team": context.member.role in {"owner", "administrator"},
             "manage_projects": context.member.role in {"owner", "administrator", "project_manager"},
             "manage_accounting": context.member.role in FINANCE_ROLES,
-            "delete_documents": context.member.role in {"owner", "administrator", "project_manager", "accountant"},
+            "manage_documents": context.member.role in DOCUMENT_REVIEW_ROLES,
         },
     }
 
@@ -2149,6 +2167,7 @@ def list_workspace_documents(
     context: MemberContext = Depends(_member_dependency),
     db: Session = Depends(get_session),
 ) -> dict[str, Any]:
+    access = _document_access(context)
     documents = db.scalars(
         select(WorkspaceDocument)
         .where(WorkspaceDocument.workspace_id == context.workspace.id)
@@ -2157,7 +2176,12 @@ def list_workspace_documents(
     ).all()
     return {
         "storage": document_storage_status(),
-        "documents": [_serialize_workspace_document(db, document) for document in documents],
+        "permissions": access,
+        "documents": [
+            _serialize_workspace_document(db, document)
+            for document in documents
+            if document.document_type in set(access["visible_document_types"])
+        ],
     }
 
 
@@ -2170,6 +2194,8 @@ async def upload_workspace_document(
     db: Session = Depends(get_session),
 ) -> dict[str, Any]:
     """Store an allowed PDF/image in private object storage and keep only metadata in SQL."""
+    normalized_type = _normalize_workflow_option(document_type, DOCUMENT_TYPES, "document type")
+    _document_access(context, normalized_type)
     content_type = str(file.content_type or "").lower().strip()
     original_filename = safe_filename(file.filename or "document")
     content = await file.read(MAX_DOCUMENT_BYTES + 1)
@@ -2185,7 +2211,6 @@ async def upload_workspace_document(
     document_id = str(uuid.uuid4())
     digest = hashlib.sha256(content).hexdigest()
     storage_key = f"workspaces/{context.workspace.id}/documents/{document_id}/{digest[:16]}-{original_filename}"
-    normalized_type = _normalize_workflow_option(document_type, DOCUMENT_TYPES, "document type")
     put_private_document(storage_key=storage_key, content=content, content_type=content_type)
     document = WorkspaceDocument(
         id=document_id,
@@ -2227,6 +2252,7 @@ def download_workspace_document(
     )
     if not document:
         raise HTTPException(status_code=404, detail="Document not found.")
+    _document_access(context, document.document_type)
     _record_audit(
         db,
         workspace_id=context.workspace.id,
