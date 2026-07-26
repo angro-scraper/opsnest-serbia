@@ -7,6 +7,14 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
+# A free Render instance can take more than 50 seconds to wake after it has
+# been idle.  Cloud actions already run outside the Tk event loop, so waiting
+# for a single safe response is better than falsely telling a user that the
+# service is unavailable.  A paid always-on instance remains required for an
+# operational production SLA.
+CLOUD_REQUEST_TIMEOUT_SECONDS = 65
+
+
 class CloudApiError(ValueError):
     """A friendly desktop-safe error returned by the OpsNest cloud service."""
 
@@ -275,7 +283,7 @@ class OpsNestCloudClient:
         request_headers.update(headers or {})
         request = Request(self.base_url + path, data=body, headers=request_headers, method=method)
         try:
-            with urlopen(request, timeout=20) as response:
+            with urlopen(request, timeout=CLOUD_REQUEST_TIMEOUT_SECONDS) as response:
                 result = json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
             try:
@@ -284,7 +292,10 @@ class OpsNestCloudClient:
                 detail = ""
             raise CloudApiError(str(detail or f"OpsNest servis je vratio grešku {exc.code}.")) from exc
         except (URLError, TimeoutError, OSError, HttpClientError, json.JSONDecodeError) as exc:
-            raise CloudApiError("OpsNest online servis trenutno nije dostupan. Pokušajte ponovo kasnije.") from exc
+            raise CloudApiError(
+                "OpsNest online servis trenutno nije dostupan ili se bezbedno pokreće. "
+                "Sačekajte jedan minut pa pokušajte ponovo."
+            ) from exc
         if not isinstance(result, dict):
             raise CloudApiError("OpsNest servis je vratio neispravan odgovor.")
         return result

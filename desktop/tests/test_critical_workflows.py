@@ -12,6 +12,7 @@ import os
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import MagicMock, patch
 from datetime import date
 from pathlib import Path
 
@@ -521,6 +522,19 @@ class CriticalWorkflowTests(unittest.TestCase):
             )
         self.assertIn(b"Example Contractor", sheet_xml)
         self.assertNotIn(b"Delta Hochbau", all_xml)
+
+    def test_cloud_client_waits_for_safe_cold_start(self) -> None:
+        """A free-tier wake-up must not become a false service-unavailable error."""
+        from opsnest_cloud_client import CLOUD_REQUEST_TIMEOUT_SECONDS, OpsNestCloudClient
+
+        response = MagicMock()
+        response.read.return_value = b'{"latest_version":"2.13.0"}'
+        context = MagicMock()
+        context.__enter__.return_value = response
+        with patch("opsnest_cloud_client.urlopen", return_value=context) as mocked_urlopen:
+            self.assertEqual(OpsNestCloudClient("https://api.example.invalid").desktop_update()["latest_version"], "2.13.0")
+        self.assertEqual(mocked_urlopen.call_args.kwargs["timeout"], CLOUD_REQUEST_TIMEOUT_SECONDS)
+        self.assertGreaterEqual(CLOUD_REQUEST_TIMEOUT_SECONDS, 60)
 
     def test_cloud_credentials_are_protected_and_legacy_values_migrate(self) -> None:
         self.db.save_cloud_connection(
