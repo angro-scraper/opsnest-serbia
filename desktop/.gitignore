@@ -1,0 +1,21 @@
+# Local customer data and generated artifacts never belong in source control.
+__pycache__/
+*.py[cod]
+.venv/
+build/
+dist/
+release/
+*.spec
+Data/
+Fakture/
+Prilozi/
+Backup/
+tmp/
+node_modules/
+*.inspect.ndjson
+# A customer-specific legacy workbook must never return to source control.
+assets/invoice_template.xlsx
+
+# Secrets are configured outside Git.
+.env
+*.db
