@@ -66,6 +66,7 @@ from opsnest_cloud.document_storage import (  # noqa: E402
     safe_filename,
     valid_document_signature,
 )
+from opsnest_cloud.desktop_release import FALLBACK_RELEASE, current_desktop_release  # noqa: E402
 
 
 class CloudControlTests(unittest.TestCase):
@@ -118,6 +119,49 @@ class CloudControlTests(unittest.TestCase):
         self.assertFalse(valid_document_signature("text/plain", b"%PDF-1.7"))
         self.assertEqual(safe_filename("../../supplier invoice?.pdf"), "supplier-invoice-.pdf")
         self.assertEqual(safe_filename("..\\..\\statement.pdf"), "statement.pdf")
+
+    def test_desktop_update_manifest_accepts_only_trusted_current_or_newer_release_urls(self) -> None:
+        expected = dict(FALLBACK_RELEASE)
+        self.assertEqual(
+            current_desktop_release(
+                expected["latest_version"],
+                expected["installer_url"],
+                expected["installer_sha256"],
+            ),
+            expected,
+        )
+        self.assertEqual(
+            current_desktop_release(
+                "2.99.0",
+                "https://opsnestone.com/downloads/OpsNest-Setup-2.99.0.exe",
+                "a" * 64,
+            )["latest_version"],
+            "2.99.0",
+        )
+        self.assertEqual(
+            current_desktop_release(
+                "2.13.3",
+                "https://opsnestone.com/downloads/OpsNest-Setup-2.13.3.exe",
+                "b" * 64,
+            ),
+            expected,
+        )
+        self.assertEqual(
+            current_desktop_release(
+                "2.99.0",
+                "https://opsnestone.com.evil.example/downloads/OpsNest-Setup-2.99.0.exe",
+                "c" * 64,
+            ),
+            expected,
+        )
+        self.assertEqual(
+            current_desktop_release(
+                "2.99.0",
+                "https://opsnestone.com/downloads/OpsNest-Setup-2.99.0.exe?redirect=1",
+                "d" * 64,
+            ),
+            expected,
+        )
 
     def test_readiness_checks_database_without_exposing_configuration(self) -> None:
         with TestClient(app) as client:
