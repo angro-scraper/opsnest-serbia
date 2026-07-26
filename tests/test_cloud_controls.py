@@ -62,6 +62,10 @@ from opsnest_cloud.main import (  # noqa: E402
     WorkflowItemUpdate,
     update_country_pack_readiness,
 )
+from opsnest_cloud.document_storage import (  # noqa: E402
+    safe_filename,
+    valid_document_signature,
+)
 
 
 class CloudControlTests(unittest.TestCase):
@@ -103,6 +107,17 @@ class CloudControlTests(unittest.TestCase):
         self.assertEqual(response.headers["cache-control"], "no-store")
         self.assertEqual(response.headers["x-frame-options"], "DENY")
         self.assertIn("frame-ancestors 'none'", response.headers["content-security-policy"])
+
+    def test_document_storage_validates_real_file_signatures_and_safe_names(self) -> None:
+        """The private bucket must never trust a browser supplied MIME type/name."""
+        self.assertTrue(valid_document_signature("application/pdf", b"%PDF-1.7\ncontent"))
+        self.assertTrue(valid_document_signature("image/jpeg", b"\xff\xd8\xff\xe0jpeg"))
+        self.assertTrue(valid_document_signature("image/png", b"\x89PNG\r\n\x1a\npng"))
+        self.assertFalse(valid_document_signature("application/pdf", b"<html>not-a-pdf</html>"))
+        self.assertFalse(valid_document_signature("image/png", b"%PDF-1.7"))
+        self.assertFalse(valid_document_signature("text/plain", b"%PDF-1.7"))
+        self.assertEqual(safe_filename("../../supplier invoice?.pdf"), "supplier-invoice-.pdf")
+        self.assertEqual(safe_filename("..\\..\\statement.pdf"), "statement.pdf")
 
     def test_readiness_checks_database_without_exposing_configuration(self) -> None:
         with TestClient(app) as client:

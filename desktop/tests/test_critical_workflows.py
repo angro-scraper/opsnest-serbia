@@ -9,12 +9,21 @@ project, and month-end close cannot bypass the control list.
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 import unittest
 import zipfile
 from unittest.mock import MagicMock, patch
 from datetime import date
 from pathlib import Path
+
+
+# Keep the release gate runnable from either repository root or `desktop/`.
+# A release check that depends on the operator's current directory is too easy
+# to silently skip in CI or during a handover.
+_DESKTOP_ROOT = Path(__file__).resolve().parents[1]
+if str(_DESKTOP_ROOT) not in sys.path:
+    sys.path.insert(0, str(_DESKTOP_ROOT))
 
 
 class CriticalWorkflowTests(unittest.TestCase):
