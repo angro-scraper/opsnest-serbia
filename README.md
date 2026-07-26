@@ -107,6 +107,21 @@ external frame and carry restrictive browser security headers. Authorization
 is still checked independently on every protected route; these headers are an
 additional browser boundary, not a replacement for roles or session checks.
 
+### Country-pack readiness register
+
+The workspace contains a country-pack readiness register for the company’s
+selected country. It assigns a responsible person, due date, status and a short
+operational note to the local accountant validation, e-invoice connection,
+VAT-period review and archive/retention preparation controls. Every change is
+recorded in the workspace integrity-protected audit trail.
+
+It is a governance and activation checklist only. A `ready` status means that
+the company has recorded its preparation; it **does not** mean that OpsNest or
+the company is legally compliant, connected to a public e-invoice system or
+approved to submit a tax return. Country-specific connectors remain disabled
+until their real credentials, technical integration and local professional
+validation are complete.
+
 ## Document Inbox storage
 
 The authenticated portal contains a Document Inbox for PDFs, JPEGs and PNGs.

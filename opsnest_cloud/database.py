@@ -233,6 +233,30 @@ class WorkspaceFinancialOverview(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class CountryPackControl(Base):
+    """Accountable readiness item for one local country-pack control.
+
+    This register is deliberately a preparation and evidence tracker.  It does
+    not assert that a company is tax, e-invoice or fiscalisation compliant.
+    The actual statutory connector and local professional validation remain
+    separate, country-specific work.
+    """
+
+    __tablename__ = "country_pack_controls"
+    __table_args__ = (UniqueConstraint("workspace_id", "country_code", "control_key", name="uq_country_pack_control"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(36), index=True)
+    country_code: Mapped[str] = mapped_column(String(8), default="INTL", index=True)
+    control_key: Mapped[str] = mapped_column(String(80), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="not_started", index=True)
+    due_date: Mapped[str] = mapped_column(String(10), default="")
+    owner_member_id: Mapped[str] = mapped_column(String(36), default="", index=True)
+    note: Mapped[str] = mapped_column(Text, default="")
+    updated_by_member_id: Mapped[str] = mapped_column(String(36), default="", index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class WorkspaceSyncSnapshot(Base):
     """Versioned encrypted-in-transit workspace data supplied by the desktop app."""
 
@@ -276,6 +300,16 @@ def create_schema() -> None:
         for name, definition in audit_additions.items():
             if name not in audit_existing:
                 connection.execute(text(f"ALTER TABLE workspace_audit_events ADD COLUMN {name} {definition}"))
+        country_control_tables = set(inspect(engine).get_table_names())
+        if "country_pack_controls" in country_control_tables:
+            country_control_existing = {
+                column["name"]
+                for column in inspect(engine).get_columns("country_pack_controls")
+            }
+            if "country_code" not in country_control_existing:
+                connection.execute(
+                    text("ALTER TABLE country_pack_controls ADD COLUMN country_code VARCHAR(8) NOT NULL DEFAULT 'INTL'")
+                )
 
 
 def get_session() -> Iterator[Session]:

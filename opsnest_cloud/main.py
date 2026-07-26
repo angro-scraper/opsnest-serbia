@@ -50,6 +50,7 @@ from .database import (
     TeamInvitation,
     Workspace,
     WorkspaceAuditEvent,
+    CountryPackControl,
     WorkspaceDocument,
     WorkspaceFinancialOverview,
     WorkspaceMember,
@@ -152,6 +153,7 @@ WORKFLOW_STATUSES = {"open", "in_progress", "waiting", "done"}
 WORKFLOW_PRIORITIES = {"low", "normal", "high", "urgent"}
 WORKFLOW_MANAGER_ROLES = {"owner", "administrator", "project_manager", "accountant"}
 DOCUMENT_TYPES = {"invoice", "receipt", "contract", "statement", "other"}
+COUNTRY_PACK_CONTROL_STATUSES = {"not_started", "in_review", "ready", "blocked", "not_applicable"}
 COUNTRY_PACKS = {
     "RS": {"label": "Serbia", "currency": "RSD", "stage": "SEF and VAT workspace"},
     "BG": {"label": "Bulgaria", "currency": "BGN", "stage": "VAT and e-invoice workspace"},
@@ -162,6 +164,36 @@ COUNTRY_PACKS = {
     "SI": {"label": "Slovenia", "currency": "EUR", "stage": "Country-pack foundation"},
     "INTL": {"label": "International", "currency": "EUR", "stage": "International core"},
 }
+
+# This is a governance checklist, never a declaration of statutory compliance.
+# Country-specific connectors only become available after the listed local
+# validation and commercial setup have actually been completed.
+COUNTRY_PACK_CONTROL_LIBRARY: dict[str, tuple[dict[str, str], ...]] = {
+    "RS": (
+        {"key": "local_adviser", "title": "Local accountant validation", "title_sr": "Potvrda lokalnog knjigovođe", "detail": "Confirm the selected Serbian workflows with the company's accountant before activation.", "detail_sr": "Pre aktivacije potvrdite izabrane tokove za Srbiju sa knjigovođom firme."},
+        {"key": "e_invoice", "title": "SEF connection readiness", "title_sr": "Spremnost SEF veze", "detail": "Register and test the authorised company connection before any production e-invoice exchange.", "detail_sr": "Registrujte i testirajte ovlašćenu vezu firme pre bilo kakve produkcione razmene e-faktura."},
+        {"key": "vat_period", "title": "VAT period and export review", "title_sr": "Provera PDV perioda i izvoza", "detail": "Agree the reporting period, reconciliation and export review with the accountant.", "detail_sr": "Dogovorite obračunski period, usaglašavanje i proveru izvoza sa knjigovođom."},
+        {"key": "archive_policy", "title": "Archive and retention policy", "title_sr": "Politika arhive i čuvanja", "detail": "Approve document retention, backup and access rules before storing accounting documents.", "detail_sr": "Odobrite pravila čuvanja, rezervnih kopija i pristupa pre skladištenja knjigovodstvenih dokumenata."},
+    ),
+    "BG": (
+        {"key": "local_adviser", "title": "Local accountant validation", "title_sr": "Potvrda lokalnog knjigovođe", "detail": "Confirm the selected Bulgarian workflows with the company's accountant before activation.", "detail_sr": "Pre aktivacije potvrdite izabrane tokove za Bugarsku sa knjigovođom firme."},
+        {"key": "e_invoice", "title": "E-invoice connection readiness", "title_sr": "Spremnost veze za e-fakture", "detail": "Validate the local e-invoice workflow and authorised company credentials before production use.", "detail_sr": "Potvrdite lokalni tok e-faktura i ovlašćene podatke firme pre produkcione upotrebe."},
+        {"key": "vat_period", "title": "VAT period and ledger review", "title_sr": "Provera PDV perioda i evidencija", "detail": "Agree VAT period controls, ledger review and accountant sign-off.", "detail_sr": "Dogovorite PDV kontrole perioda, proveru evidencija i potvrdu knjigovođe."},
+        {"key": "archive_policy", "title": "Archive and retention policy", "title_sr": "Politika arhive i čuvanja", "detail": "Approve document retention, backup and access rules before storing accounting documents.", "detail_sr": "Odobrite pravila čuvanja, rezervnih kopija i pristupa pre skladištenja knjigovodstvenih dokumenata."},
+    ),
+    "HR": (
+        {"key": "local_adviser", "title": "Local accountant validation", "title_sr": "Potvrda lokalnog knjigovođe", "detail": "Confirm the selected Croatian workflows with the company's accountant before activation.", "detail_sr": "Pre aktivacije potvrdite izabrane tokove za Hrvatsku sa knjigovođom firme."},
+        {"key": "e_invoice", "title": "E-invoice and fiscalisation review", "title_sr": "Provera e-faktura i fiskalizacije", "detail": "Validate the local invoice and fiscalisation obligations with an authorised adviser before production use.", "detail_sr": "Potvrdite lokalne obaveze za račune i fiskalizaciju sa ovlašćenim savetnikom pre produkcione upotrebe."},
+        {"key": "vat_period", "title": "VAT period and export review", "title_sr": "Provera PDV perioda i izvoza", "detail": "Agree reporting-period controls and export review with the accountant.", "detail_sr": "Dogovorite kontrole obračunskog perioda i proveru izvoza sa knjigovođom."},
+        {"key": "archive_policy", "title": "Archive and retention policy", "title_sr": "Politika arhive i čuvanja", "detail": "Approve document retention, backup and access rules before storing accounting documents.", "detail_sr": "Odobrite pravila čuvanja, rezervnih kopija i pristupa pre skladištenja knjigovodstvenih dokumenata."},
+    ),
+}
+_GENERIC_COUNTRY_PACK_CONTROLS: tuple[dict[str, str], ...] = (
+    {"key": "local_adviser", "title": "Local accountant validation", "title_sr": "Potvrda lokalnog knjigovođe", "detail": "Confirm the selected workflows with the company's local accountant before activation.", "detail_sr": "Pre aktivacije potvrdite izabrane tokove sa lokalnim knjigovođom firme."},
+    {"key": "e_invoice", "title": "E-invoice readiness review", "title_sr": "Provera spremnosti za e-fakture", "detail": "Validate the local e-invoice route and company authorisation before production use.", "detail_sr": "Potvrdite lokalni tok e-faktura i ovlašćenja firme pre produkcione upotrebe."},
+    {"key": "vat_period", "title": "VAT period and export review", "title_sr": "Provera PDV perioda i izvoza", "detail": "Agree reporting-period controls and export review with the accountant.", "detail_sr": "Dogovorite kontrole obračunskog perioda i proveru izvoza sa knjigovođom."},
+    {"key": "archive_policy", "title": "Archive and retention policy", "title_sr": "Politika arhive i čuvanja", "detail": "Approve document retention, backup and access rules before storing accounting documents.", "detail_sr": "Odobrite pravila čuvanja, rezervnih kopija i pristupa pre skladištenja knjigovodstvenih dokumenata."},
+)
 
 
 class RequestEmailCode(BaseModel):
@@ -238,6 +270,17 @@ class WorkspaceProfileUpdate(BaseModel):
     country_code: str = Field(default="INTL", min_length=2, max_length=8)
     default_currency: str = Field(default="EUR", min_length=3, max_length=8)
     business_profile: str = Field(default="general", pattern=r"^(construction|general|services|trade)$")
+
+
+class CountryPackControlUpdate(BaseModel):
+    """Accountability metadata only; statutory evidence stays in the local archive."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: str = Field(default="not_started", max_length=32)
+    due_date: str = Field(default="", max_length=10)
+    owner_member_id: str = Field(default="", max_length=36)
+    note: str = Field(default="", max_length=1_000)
 
 
 class FinancialOverviewUpload(BaseModel):
@@ -355,6 +398,11 @@ def _normalize_currency_code(value: str) -> str:
     return currency
 
 
+def _country_pack_controls(country_code: str) -> tuple[dict[str, str], ...]:
+    """Return preparation controls for a country without implying compliance."""
+    return COUNTRY_PACK_CONTROL_LIBRARY.get(_normalize_country_code(country_code), _GENERIC_COUNTRY_PACK_CONTROLS)
+
+
 def _normalize_workflow_option(value: str, allowed: set[str], label: str) -> str:
     normalized = str(value or "").strip().lower()
     if normalized not in allowed:
@@ -406,6 +454,28 @@ def _serialize_workflow_item(db: Session, item: WorkflowItem) -> dict[str, Any]:
         "created_at": item.created_at.isoformat(timespec="seconds"),
         "updated_at": item.updated_at.isoformat(timespec="seconds"),
         "closed_at": item.closed_at.isoformat(timespec="seconds") if item.closed_at else "",
+    }
+
+
+def _serialize_country_pack_control(
+    db: Session,
+    workspace_id: str,
+    definition: dict[str, str],
+    record: CountryPackControl | None,
+) -> dict[str, Any]:
+    owner = _active_workspace_member(db, workspace_id, record.owner_member_id) if record else None
+    return {
+        "key": definition["key"],
+        "title": definition["title"],
+        "title_sr": definition["title_sr"],
+        "detail": definition["detail"],
+        "detail_sr": definition["detail_sr"],
+        "status": record.status if record else "not_started",
+        "due_date": record.due_date if record else "",
+        "owner_member_id": record.owner_member_id if record else "",
+        "owner_member_name": owner.display_name or owner.email if owner else "Unassigned",
+        "note": record.note if record else "",
+        "updated_at": record.updated_at.isoformat(timespec="seconds") if record and record.updated_at else "",
     }
 
 
@@ -1461,6 +1531,99 @@ def update_workspace_profile(
     )
     db.commit()
     return _workspace_overview(db, context)
+
+
+@app.get("/v1/workspace/country-pack-readiness")
+def get_country_pack_readiness(
+    context: MemberContext = Depends(_member_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Show the local activation checklist without claiming legal compliance."""
+    country_code = _normalize_country_code(context.workspace.country_code)
+    definitions = _country_pack_controls(country_code)
+    control_keys = [definition["key"] for definition in definitions]
+    records = db.scalars(
+        select(CountryPackControl).where(
+            CountryPackControl.workspace_id == context.workspace.id,
+            CountryPackControl.country_code == country_code,
+            CountryPackControl.control_key.in_(control_keys),
+        )
+    ).all()
+    records_by_key = {record.control_key: record for record in records}
+    active_members = db.scalars(
+        select(WorkspaceMember)
+        .where(WorkspaceMember.workspace_id == context.workspace.id, WorkspaceMember.status == "active")
+        .order_by(WorkspaceMember.display_name, WorkspaceMember.email)
+    ).all()
+    return {
+        "country_code": country_code,
+        "country_label": COUNTRY_PACKS.get(country_code, {"label": country_code})["label"],
+        "disclaimer": "This is a readiness register, not a legal, tax, fiscalisation or e-invoice compliance declaration.",
+        "disclaimer_sr": "Ovo je registar spremnosti, a ne potvrda pravne, poreske, fiskalizacione ili e-faktura usklađenosti.",
+        "controls": [
+            _serialize_country_pack_control(db, context.workspace.id, definition, records_by_key.get(definition["key"]))
+            for definition in definitions
+        ],
+        "members": [_serialize_member(member) for member in active_members],
+        "can_manage": context.member.role in WORKFLOW_MANAGER_ROLES,
+    }
+
+
+@app.put("/v1/workspace/country-pack-readiness/{control_key}")
+def update_country_pack_readiness(
+    control_key: str,
+    payload: CountryPackControlUpdate,
+    context: MemberContext = Depends(_member_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Assign and record local-readiness work with an accountable audit entry."""
+    _require_team_role(context, *WORKFLOW_MANAGER_ROLES)
+    country_code = _normalize_country_code(context.workspace.country_code)
+    definitions = {definition["key"]: definition for definition in _country_pack_controls(country_code)}
+    definition = definitions.get(str(control_key or "").strip())
+    if not definition:
+        raise HTTPException(status_code=404, detail="Country-pack control not found for the selected country.")
+    owner = _active_workspace_member(db, context.workspace.id, payload.owner_member_id)
+    if payload.owner_member_id.strip() and not owner:
+        raise HTTPException(status_code=422, detail="Choose an active member of this workspace.")
+    control = db.scalar(
+        select(CountryPackControl).where(
+            CountryPackControl.workspace_id == context.workspace.id,
+            CountryPackControl.country_code == country_code,
+            CountryPackControl.control_key == definition["key"],
+        )
+    )
+    if control is None:
+        control = CountryPackControl(
+            id=str(uuid.uuid4()),
+            workspace_id=context.workspace.id,
+            country_code=country_code,
+            control_key=definition["key"],
+        )
+        db.add(control)
+    old_status = control.status
+    control.status = _normalize_workflow_option(payload.status, COUNTRY_PACK_CONTROL_STATUSES, "country-pack control status")
+    control.due_date = _normalize_workflow_due_date(payload.due_date)
+    control.owner_member_id = owner.id if owner else ""
+    control.note = payload.note.strip()
+    control.updated_by_member_id = context.member.id
+    _record_audit(
+        db,
+        workspace_id=context.workspace.id,
+        actor_member_id=context.member.id,
+        action="country_pack.control_updated",
+        entity_type="country_pack_control",
+        entity_id=control.id,
+        details={
+            "country_code": country_code,
+            "control_key": control.control_key,
+            "from_status": old_status,
+            "to_status": control.status,
+            "assigned": bool(control.owner_member_id),
+        },
+    )
+    db.commit()
+    return {"control": _serialize_country_pack_control(db, context.workspace.id, definition, control)}
 
 
 @app.get("/v1/workspace/financial-overview")
