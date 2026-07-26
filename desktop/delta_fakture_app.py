@@ -1473,7 +1473,7 @@ OPSNEST_WEBSITE_URL = "https://opsnestone.com"
 OPSNEST_CLOUD_API_URL = "https://api.opsnestone.com"
 OPSNEST_PRICING_URL = f"{OPSNEST_WEBSITE_URL}/pricing"
 OPSNEST_PAYPAL_CANCELLATION_URL = "https://www.paypal.com/myaccount/autopay/"
-OPSNEST_APP_VERSION = "2.13.4"
+OPSNEST_APP_VERSION = "2.13.5"
 
 
 def normalize_ui_language(value: Any) -> str:
@@ -2503,12 +2503,34 @@ class MainApp(tk.Tk):
         ttk.Label(card, text=access_text, style="AccessHelp.TLabel", wraplength=500).pack(anchor="w", pady=(0, 20))
         ttk.Label(card, text=self.subscription_status_text(), style="AccessHelp.TLabel", wraplength=500).pack(anchor="w", pady=(0, 16))
 
+        # The access card is deliberately narrow enough to work on smaller
+        # displays.  Do not pack every action into one horizontal row: that
+        # hid the most important "Prijava u tim" action outside the card.
         actions = ttk.Frame(card, style="Panel.TFrame")
         actions.pack(fill="x")
-        ttk.Button(actions, text=tr("Registruj firmu"), style="Primary.TButton", command=lambda: self.open_company_registration(from_access=True)).pack(side="left")
-        ttk.Button(actions, text=tr("Prijavi se"), command=self.open_local_login).pack(side="left", padx=(8, 0))
-        ttk.Button(actions, text="Prijava u tim", command=self.open_team_login).pack(side="left", padx=(8, 0))
-        ttk.Button(actions, text=tr("Paketi i plaćanje"), command=self.open_plan_and_billing).pack(side="left", padx=(8, 0))
+        actions.columnconfigure(0, weight=1)
+        actions.columnconfigure(1, weight=1)
+        ttk.Button(
+            actions,
+            text="Prijava u tim (e-mail i lozinka)",
+            style="Primary.TButton",
+            command=self.open_team_login,
+        ).grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        ttk.Button(
+            actions,
+            text=tr("Prijavi se"),
+            command=self.open_local_login,
+        ).grid(row=1, column=0, sticky="ew", padx=(0, 4))
+        ttk.Button(
+            actions,
+            text=tr("Registruj firmu"),
+            command=lambda: self.open_company_registration(from_access=True),
+        ).grid(row=1, column=1, sticky="ew", padx=(4, 0))
+        ttk.Button(
+            actions,
+            text=tr("Paketi i plaćanje"),
+            command=self.open_plan_and_billing,
+        ).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
 
         website = ttk.Label(card, text="opsnestone.com", style="Link.TLabel", cursor="hand2")
         website.pack(anchor="w", pady=(14, 0))
