@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import csv
 import hashlib
 import hmac
 import json
@@ -10,6 +11,7 @@ from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from io import StringIO
 from threading import Lock
 from html import escape
 from typing import Annotated, Any
@@ -2154,6 +2156,83 @@ def team_audit_integrity(
             detail="Workspace audit integrity needs investigation before this control can be relied on.",
         )
     return result
+
+
+@app.get("/v1/team/audit/evidence.csv")
+def export_team_audit_evidence(
+    context: MemberContext = Depends(_member_dependency),
+    db: Session = Depends(get_session),
+) -> Response:
+    """Export privacy-minimal operational audit evidence after integrity verification.
+
+    The CSV contains only event metadata, the actor label and integrity-chain
+    hashes. It never exports passwords, invoice data, document bodies, payment
+    credentials or flexible event details. It is operational evidence, not a
+    statutory archive or a tax filing.
+    """
+    _require_team_role(context, "owner", "administrator")
+    integrity = _verify_workspace_audit_chain(db, context.workspace.id)
+    if not integrity["ok"]:
+        raise HTTPException(
+            status_code=409,
+            detail="Workspace audit integrity needs investigation before evidence can be exported.",
+        )
+
+    # Evidence generation is itself an accountable control event. Verify the
+    # completed chain again so the generated file includes this action.
+    _record_audit(
+        db,
+        workspace_id=context.workspace.id,
+        actor_member_id=context.member.id,
+        action="team.audit_evidence_exported",
+        entity_type="workspace",
+        entity_id=context.workspace.id,
+    )
+    db.commit()
+    integrity = _verify_workspace_audit_chain(db, context.workspace.id)
+    if not integrity["ok"]:
+        raise HTTPException(
+            status_code=409,
+            detail="Workspace audit integrity needs investigation before evidence can be exported.",
+        )
+
+    member_names = {
+        member.id: member.display_name or member.email
+        for member in db.scalars(
+            select(WorkspaceMember).where(WorkspaceMember.workspace_id == context.workspace.id)
+        ).all()
+    }
+    events = db.scalars(
+        select(WorkspaceAuditEvent)
+        .where(WorkspaceAuditEvent.workspace_id == context.workspace.id)
+        .order_by(WorkspaceAuditEvent.created_at.asc(), WorkspaceAuditEvent.id.asc())
+    ).all()
+    output = StringIO(newline="")
+    writer = csv.writer(output, lineterminator="\n")
+    writer.writerow(["OpsNest operational audit evidence"])
+    writer.writerow(["workspace_id", context.workspace.id])
+    writer.writerow(["exported_at_utc", datetime.utcnow().isoformat(timespec="seconds")])
+    writer.writerow(["integrity", "verified"])
+    writer.writerow(["event_count", integrity["count"]])
+    writer.writerow(["chain_last_hash", integrity["last_hash"]])
+    writer.writerow([])
+    writer.writerow(["timestamp_utc", "action", "actor", "entity_type", "entity_id", "previous_hash", "entry_hash"])
+    for event in events:
+        writer.writerow([
+            event.created_at.isoformat(timespec="seconds"),
+            event.action,
+            member_names.get(event.actor_member_id, "System or former member"),
+            event.entity_type,
+            event.entity_id,
+            event.previous_hash,
+            event.entry_hash,
+        ])
+    filename = "opsnest-audit-evidence-" + datetime.utcnow().strftime("%Y%m%d-%H%M%S") + ".csv"
+    return Response(
+        content="\ufeff" + output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/v1/billing/summary")

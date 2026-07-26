@@ -107,6 +107,14 @@ as an incident and investigated before relying on the control trail. This is a
 tamper-evident operational control, not a statutory immutable-archive or
 country-compliance certification.
 
+Owners and administrators can download a UTF-8 CSV **audit evidence** file
+after the complete audit chain verifies. The export records only timestamp,
+action, actor label, entity reference and integrity hashes; it deliberately
+omits passwords, invoices, document/file contents, payment credentials and
+flexible event details. Creating an export is itself appended to the trail and
+included in the verified file. This supports operational handover and review;
+it is not a statutory archive, a bookkeeping export or a tax filing.
+
 Workspace and API responses are marked `no-store`, cannot be embedded in an
 external frame and carry restrictive browser security headers. Authorization
 is still checked independently on every protected route; these headers are an

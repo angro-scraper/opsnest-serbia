@@ -36,6 +36,7 @@ from opsnest_cloud.main import (  # noqa: E402
     MemberContext,
     _record_audit,
     _verify_workspace_audit_chain,
+    export_team_audit_evidence,
     app,
     get_country_pack_readiness,
     list_team_sessions,
@@ -190,6 +191,51 @@ class CloudControlTests(unittest.TestCase):
             self.assertTrue(revoke_team_session(stale_session.id, context, db)["ok"])
             after = list_team_sessions(context, db)
             self.assertEqual([item["id"] for item in after["sessions"]], [current_session.id])
+            self.assertTrue(_verify_workspace_audit_chain(db, workspace_id)["ok"])
+        finally:
+            db.close()
+
+    def test_audit_evidence_export_verifies_chain_and_omits_event_details(self) -> None:
+        db = SessionLocal()
+        workspace_id = str(uuid.uuid4())
+        member_id = str(uuid.uuid4())
+        try:
+            workspace = Workspace(
+                id=workspace_id,
+                owner_email="audit-owner@example.test",
+                company_name="Test Company",
+                country_code="INTL",
+                subscription_status="active",
+            )
+            owner = WorkspaceMember(
+                id=member_id,
+                workspace_id=workspace_id,
+                email="audit-owner@example.test",
+                display_name="Audit Owner",
+                role="owner",
+                status="active",
+            )
+            session = MemberSession(
+                id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=member_id,
+                token_hash="audit-session", expires_at=datetime.utcnow() + timedelta(days=1),
+            )
+            db.add_all([workspace, owner, session])
+            _record_audit(
+                db,
+                workspace_id=workspace_id,
+                actor_member_id=member_id,
+                action="workflow.item_created",
+                details={"private_note": "must-not-appear-in-export"},
+            )
+            db.commit()
+
+            response = export_team_audit_evidence(MemberContext(workspace=workspace, member=owner, session=session), db)
+            content = response.body.decode("utf-8-sig")
+            self.assertTrue(str(response.media_type).startswith("text/csv"))
+            self.assertIn("integrity,verified", content)
+            self.assertIn("workflow.item_created", content)
+            self.assertIn("team.audit_evidence_exported", content)
+            self.assertNotIn("must-not-appear-in-export", content)
             self.assertTrue(_verify_workspace_audit_chain(db, workspace_id)["ok"])
         finally:
             db.close()
