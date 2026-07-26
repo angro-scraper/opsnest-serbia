@@ -1,0 +1,40 @@
+name: Professional regression gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  controlled-finance-flows:
+    name: Cloud and Desktop control flows
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: opsnest_cloud/requirements.txt
+
+      - name: Install controlled test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r opsnest_cloud/requirements.txt openpyxl reportlab Pillow
+
+      - name: Compile cloud control boundary
+        run: |
+          python -m py_compile opsnest_cloud/time_utils.py opsnest_cloud/database.py opsnest_cloud/document_storage.py opsnest_cloud/main.py opsnest_cloud/services.py opsnest_cloud/security.py opsnest_cloud/admin_console.py tests/test_cloud_controls.py
+
+      - name: Run accounting workflow regression suite
+        run: python -m unittest tests.test_cloud_controls desktop.tests.test_critical_workflows -v
