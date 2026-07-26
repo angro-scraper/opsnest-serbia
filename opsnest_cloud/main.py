@@ -573,6 +573,161 @@ def _workspace_overview(db: Session, context: MemberContext) -> dict[str, Any]:
     }
 
 
+def _workspace_control_brief(db: Session, context: MemberContext) -> dict[str, Any]:
+    """Calculate accountable exceptions without exposing accounting records.
+
+    This is deliberately a small, deterministic control layer: it reads only
+    work-queue metadata, country-pack preparation status and the timestamp of
+    the aggregate desktop summary. It neither creates payments nor treats a
+    result as a legal, tax or statutory-compliance decision.
+    """
+    today = datetime.utcnow().date()
+    due_soon = today + timedelta(days=7)
+    items: list[dict[str, Any]] = []
+    active_work = db.scalars(
+        select(WorkflowItem).where(
+            WorkflowItem.workspace_id == context.workspace.id,
+            WorkflowItem.status != "done",
+        )
+    ).all()
+
+    overdue = []
+    due_within_week = []
+    for item in active_work:
+        if not item.due_date:
+            continue
+        try:
+            due = datetime.strptime(item.due_date, "%Y-%m-%d").date()
+        except ValueError:
+            # Legacy malformed dates stay visible in the normal queue, but
+            # must not crash the control layer.
+            continue
+        if due < today:
+            overdue.append(item)
+        elif due <= due_soon:
+            due_within_week.append(item)
+    if overdue:
+        items.append({
+            "key": "workflow_overdue",
+            "severity": "attention",
+            "count": len(overdue),
+            "target": "workflowList",
+            "title": "Overdue operational work",
+            "title_sr": "Zadaci sa probijenim rokom",
+            "detail": f"{len(overdue)} active work item(s) have passed their due date.",
+            "detail_sr": f"{len(overdue)} aktivnih zadataka je prošlo zadati rok.",
+        })
+    if due_within_week:
+        items.append({
+            "key": "workflow_due_soon",
+            "severity": "watch",
+            "count": len(due_within_week),
+            "target": "workflowList",
+            "title": "Work due in the next seven days",
+            "title_sr": "Zadaci sa rokom u narednih sedam dana",
+            "detail": f"{len(due_within_week)} active work item(s) need a near-term review.",
+            "detail_sr": f"{len(due_within_week)} aktivnih zadataka zahteva proveru u kratkom roku.",
+        })
+
+    unassigned_urgent = [
+        item for item in active_work
+        if not item.assigned_member_id and item.priority in {"high", "urgent"}
+    ]
+    if unassigned_urgent:
+        items.append({
+            "key": "unassigned_priority_work",
+            "severity": "attention",
+            "count": len(unassigned_urgent),
+            "target": "workflowList",
+            "title": "High-priority work has no owner",
+            "title_sr": "Hitni i važni zadaci nemaju nosioca",
+            "detail": f"{len(unassigned_urgent)} high or urgent item(s) are not assigned to an active person.",
+            "detail_sr": f"{len(unassigned_urgent)} hitnih ili važnih zadataka nije dodeljeno aktivnoj osobi.",
+        })
+
+    country_code = _normalize_country_code(context.workspace.country_code)
+    country_controls = db.scalars(
+        select(CountryPackControl).where(
+            CountryPackControl.workspace_id == context.workspace.id,
+            CountryPackControl.country_code == country_code,
+        )
+    ).all()
+    blocked_controls = [control for control in country_controls if control.status == "blocked"]
+    overdue_controls = []
+    for control in country_controls:
+        if control.status in {"ready", "not_applicable"} or not control.due_date:
+            continue
+        try:
+            if datetime.strptime(control.due_date, "%Y-%m-%d").date() < today:
+                overdue_controls.append(control)
+        except ValueError:
+            continue
+    if blocked_controls:
+        items.append({
+            "key": "country_control_blocked",
+            "severity": "attention",
+            "count": len(blocked_controls),
+            "target": "countryReadinessSection",
+            "title": "Country-pack control is blocked",
+            "title_sr": "Kontrola nacionalnog paketa je blokirana",
+            "detail": f"{len(blocked_controls)} local readiness control(s) are blocked and need an accountable decision.",
+            "detail_sr": f"{len(blocked_controls)} lokalnih kontrola spremnosti je blokirano i zahteva odgovornu odluku.",
+        })
+    if overdue_controls:
+        items.append({
+            "key": "country_control_overdue",
+            "severity": "watch",
+            "count": len(overdue_controls),
+            "target": "countryReadinessSection",
+            "title": "Country-pack control review is overdue",
+            "title_sr": "Provera nacionalnog paketa kasni",
+            "detail": f"{len(overdue_controls)} local readiness control(s) have passed their review date.",
+            "detail_sr": f"{len(overdue_controls)} lokalnih kontrola spremnosti je prošlo rok za proveru.",
+        })
+
+    overview = db.get(WorkspaceFinancialOverview, context.workspace.id)
+    if not overview:
+        items.append({
+            "key": "financial_overview_missing",
+            "severity": "watch",
+            "count": 0,
+            "target": "financialOverviewSection",
+            "title": "Desktop financial overview is not synchronized",
+            "title_sr": "Finansijski pregled iz Desktop aplikacije nije sinhronizovan",
+            "detail": "Synchronize aggregate totals before relying on the finance control board.",
+            "detail_sr": "Sinhronizujte zbirne iznose pre oslanjanja na finansijsku kontrolnu tablu.",
+        })
+    elif not overview.updated_at or overview.updated_at < datetime.utcnow() - timedelta(hours=24):
+        items.append({
+            "key": "financial_overview_stale",
+            "severity": "watch",
+            "count": 0,
+            "target": "financialOverviewSection",
+            "title": "Desktop financial overview is older than 24 hours",
+            "title_sr": "Finansijski pregled iz Desktop aplikacije je stariji od 24 sata",
+            "detail": "Confirm that the owner and accountant are reviewing current aggregate totals.",
+            "detail_sr": "Potvrdite da vlasnik i knjigovođa proveravaju aktuelne zbirne iznose.",
+        })
+
+    if not items:
+        items.append({
+            "key": "no_exception",
+            "severity": "clear",
+            "count": 0,
+            "target": "",
+            "title": "No automated control exception detected",
+            "title_sr": "Nema prepoznatog automatskog kontrolnog odstupanja",
+            "detail": "Continue the normal owner and accountant review cycle.",
+            "detail_sr": "Nastavite redovan ciklus provere vlasnika i knjigovođe.",
+        })
+    return {
+        "generated_at": datetime.utcnow().isoformat(timespec="seconds"),
+        "items": items,
+        "disclaimer": "This is an operational prompt, not a payment instruction, accounting posting, tax filing or compliance decision.",
+        "disclaimer_sr": "Ovo je operativni podsetnik, a ne nalog za plaćanje, knjiženje, poreska prijava niti odluka o usklađenosti.",
+    }
+
+
 def _workspace_audit_hash(event: WorkspaceAuditEvent, previous_hash: str) -> str:
     """Create a deterministic, secret-bound hash for one audit event.
 
@@ -1741,6 +1896,15 @@ def get_workspace_financial_overview(
         "updated_at": overview.updated_at.isoformat(timespec="seconds") if overview.updated_at else "",
         "updated_by_member_id": overview.updated_by_member_id,
     }
+
+
+@app.get("/v1/workspace/control-brief")
+def get_workspace_control_brief(
+    context: MemberContext = Depends(_member_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Return automatic operational exceptions for the authenticated workspace."""
+    return _workspace_control_brief(db, context)
 
 
 @app.post("/v1/workspace/financial-overview")

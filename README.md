@@ -91,6 +91,16 @@ team members can add operational comments. The queue keeps only task metadata,
 deadlines and comments, never invoice files, payment credentials or accounting
 snapshots.
 
+### Automated control brief
+
+Every authenticated workspace also receives a read-only daily control brief.
+It automatically highlights overdue work, high/urgent work without an owner,
+country-pack controls that are blocked or overdue, and a missing or stale
+aggregate Desktop financial overview. It contains only control metadata and
+timestamps; it cannot create payments, accounting postings, tax returns or a
+legal-compliance conclusion. The brief directs the user back to the relevant
+controlled workflow for the actual review and decision.
+
 Owners and administrators can also see the active device sessions for their
 workspace and revoke one specific device immediately. The view shows only the
 member name, device label and session timing; tokens, passwords and IP data are

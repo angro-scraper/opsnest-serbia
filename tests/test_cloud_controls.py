@@ -27,7 +27,9 @@ from opsnest_cloud.database import (  # noqa: E402
     SessionLocal,
     Workspace,
     WorkspaceAuditEvent,
+    WorkspaceFinancialOverview,
     WorkspaceMember,
+    WorkflowItem,
     create_schema,
     engine,
 )
@@ -37,6 +39,7 @@ from opsnest_cloud.main import (  # noqa: E402
     _record_audit,
     _verify_workspace_audit_chain,
     export_team_audit_evidence,
+    get_workspace_control_brief,
     app,
     get_country_pack_readiness,
     list_team_sessions,
@@ -237,6 +240,58 @@ class CloudControlTests(unittest.TestCase):
             self.assertIn("team.audit_evidence_exported", content)
             self.assertNotIn("must-not-appear-in-export", content)
             self.assertTrue(_verify_workspace_audit_chain(db, workspace_id)["ok"])
+        finally:
+            db.close()
+
+    def test_control_brief_flags_overdue_unowned_blocked_and_stale_reviews(self) -> None:
+        db = SessionLocal()
+        workspace_id = str(uuid.uuid4())
+        member_id = str(uuid.uuid4())
+        yesterday = (datetime.utcnow() - timedelta(days=1)).date().isoformat()
+        try:
+            workspace = Workspace(
+                id=workspace_id,
+                owner_email="brief-owner@example.test",
+                company_name="Test Company",
+                country_code="RS",
+                subscription_status="active",
+            )
+            owner = WorkspaceMember(
+                id=member_id,
+                workspace_id=workspace_id,
+                email="brief-owner@example.test",
+                display_name="Brief Owner",
+                role="owner",
+                status="active",
+            )
+            session = MemberSession(
+                id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=member_id,
+                token_hash="brief-session", expires_at=datetime.utcnow() + timedelta(days=1),
+            )
+            overdue = WorkflowItem(
+                id=str(uuid.uuid4()), workspace_id=workspace_id, title="Reconcile bank",
+                status="open", priority="urgent", due_date=yesterday, assigned_member_id="",
+            )
+            blocked = CountryPackControl(
+                id=str(uuid.uuid4()), workspace_id=workspace_id, country_code="RS",
+                control_key="e_invoice", status="blocked", due_date=yesterday,
+            )
+            overview = WorkspaceFinancialOverview(
+                workspace_id=workspace_id,
+                currency="RSD",
+                summary_json="{}",
+                updated_at=datetime.utcnow() - timedelta(hours=25),
+            )
+            db.add_all([workspace, owner, session, overdue, blocked, overview])
+            db.commit()
+
+            brief = get_workspace_control_brief(MemberContext(workspace=workspace, member=owner, session=session), db)
+            controls = {item["key"]: item for item in brief["items"]}
+            self.assertEqual(controls["workflow_overdue"]["severity"], "attention")
+            self.assertEqual(controls["unassigned_priority_work"]["count"], 1)
+            self.assertEqual(controls["country_control_blocked"]["target"], "countryReadinessSection")
+            self.assertIn("financial_overview_stale", controls)
+            self.assertIn("not a payment instruction", brief["disclaimer"])
         finally:
             db.close()
 
