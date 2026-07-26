@@ -2914,6 +2914,8 @@ class MainApp(tk.Tk):
                 expected_revision=expected_revision,
                 snapshot_b64=snapshot["snapshot_b64"],
                 sha256=snapshot["sha256"],
+                financial_audit_hash=snapshot["financial_audit_hash"],
+                financial_audit_count=int(snapshot["financial_audit_count"]),
             )
             revision = int(result.get("revision") or 0)
             self.db.mark_cloud_sync(revision, str(result.get("sha256") or snapshot["sha256"]))

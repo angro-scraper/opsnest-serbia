@@ -2213,13 +2213,19 @@ class Database:
             "current_sha256": current,
         }
 
-    def build_cloud_sync_snapshot(self) -> dict[str, str]:
+    def build_cloud_sync_snapshot(self) -> dict[str, Any]:
         """Create a sanitized compressed SQLite copy for the central team revision store.
 
         SMTP passwords, local PIN hashes, and all cloud credentials are purposefully
         removed. Project attachment files are not included; they remain local until
         dedicated attachment synchronization is enabled.
         """
+        audit_anchor = self.verify_financial_audit_chain()
+        if not audit_anchor.get("ok"):
+            raise ValueError(
+                "Zajednička sinhronizacija je zaustavljena: finansijski audit nije ispravan. "
+                "Sačuvajte provereni backup i prijavite incident administratoru."
+            )
         self.conn.commit()
         temp_handle = tempfile.NamedTemporaryFile(prefix="opsnest_sync_", suffix=".db", delete=False)
         temp_path = Path(temp_handle.name)
@@ -2280,6 +2286,8 @@ class Database:
             return {
                 "snapshot_b64": base64.b64encode(raw).decode("ascii"),
                 "sha256": hashlib.sha256(raw).hexdigest(),
+                "financial_audit_hash": str(audit_anchor.get("last_hash") or ""),
+                "financial_audit_count": int(audit_anchor.get("count") or 0),
             }
         finally:
             try:

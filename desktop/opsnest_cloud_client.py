@@ -182,6 +182,8 @@ class OpsNestCloudClient:
         expected_revision: int,
         snapshot_b64: str,
         sha256: str,
+        financial_audit_hash: str = "",
+        financial_audit_count: int = 0,
     ) -> dict[str, Any]:
         return self._request(
             "/v1/team/sync",
@@ -190,6 +192,8 @@ class OpsNestCloudClient:
                 "expected_revision": int(expected_revision),
                 "snapshot_b64": snapshot_b64,
                 "sha256": sha256,
+                "financial_audit_hash": str(financial_audit_hash or ""),
+                "financial_audit_count": int(financial_audit_count or 0),
             },
             headers=self._member_headers(workspace_id, member_id, member_token),
         )

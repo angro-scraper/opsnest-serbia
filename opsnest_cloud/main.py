@@ -319,6 +319,8 @@ class UploadSyncSnapshot(BaseModel):
     expected_revision: int = Field(ge=0)
     snapshot_b64: str = Field(min_length=1, max_length=35_000_000)
     sha256: str = Field(min_length=64, max_length=64)
+    financial_audit_hash: str = Field(default="", max_length=64)
+    financial_audit_count: int = Field(default=0, ge=0, le=10_000_000)
 
 
 _desktop_activation_attempts: dict[str, deque[datetime]] = defaultdict(deque)
@@ -2426,6 +2428,12 @@ def upload_team_snapshot(
         raise HTTPException(status_code=413, detail="The synchronized database is larger than the 25 MB team limit.")
     if hashlib.sha256(raw_snapshot).hexdigest() != payload.sha256.lower():
         raise HTTPException(status_code=422, detail="The team snapshot checksum does not match.")
+    audit_hash = payload.financial_audit_hash.strip().lower()
+    audit_count = int(payload.financial_audit_count)
+    if audit_count == 0 and audit_hash:
+        raise HTTPException(status_code=422, detail="An empty financial audit cannot include an audit anchor.")
+    if audit_count > 0 and not re.fullmatch(r"[0-9a-f]{64}", audit_hash):
+        raise HTTPException(status_code=422, detail="The financial audit anchor is not valid.")
     # PostgreSQL locks the current revision for this transaction. Two desktops
     # cannot both accept the same expected revision and silently lose work.
     snapshot = db.scalar(
@@ -2438,6 +2446,8 @@ def upload_team_snapshot(
     # A retry after a network interruption must be safe. If this exact content
     # is already current, return success without a duplicate version or audit event.
     if snapshot is not None and snapshot.sha256 == incoming_sha256 and snapshot.snapshot_b64.startswith("v1:"):
+        if snapshot.financial_audit_hash != audit_hash or int(snapshot.financial_audit_count or 0) != audit_count:
+            raise HTTPException(status_code=409, detail="The financial audit anchor does not match the current team revision.")
         return {"ok": True, "revision": current_revision, "sha256": snapshot.sha256, "unchanged": True}
     if payload.expected_revision != current_revision:
         raise HTTPException(
@@ -2450,6 +2460,8 @@ def upload_team_snapshot(
     snapshot.revision = current_revision + 1
     snapshot.snapshot_b64 = _encrypt_workspace_snapshot(raw_snapshot)
     snapshot.sha256 = incoming_sha256
+    snapshot.financial_audit_hash = audit_hash
+    snapshot.financial_audit_count = audit_count
     snapshot.updated_by_member_id = context.member.id
     snapshot.updated_at = utc_now()
     _record_audit(
@@ -2459,7 +2471,12 @@ def upload_team_snapshot(
         action="team.sync_uploaded",
         entity_type="workspace_sync",
         entity_id=str(snapshot.revision),
-        details={"revision": snapshot.revision, "sha256": snapshot.sha256},
+        details={
+            "revision": snapshot.revision,
+            "sha256": snapshot.sha256,
+            "financial_audit_hash": snapshot.financial_audit_hash,
+            "financial_audit_count": snapshot.financial_audit_count,
+        },
     )
     db.commit()
     return {"ok": True, "revision": snapshot.revision, "sha256": snapshot.sha256}

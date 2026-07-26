@@ -478,6 +478,8 @@ class CloudControlTests(unittest.TestCase):
                 expected_revision=0,
                 snapshot_b64=base64.b64encode(raw_snapshot).decode("ascii"),
                 sha256=checksum,
+                financial_audit_hash="a" * 64,
+                financial_audit_count=7,
             )
 
             first_upload = upload_team_snapshot(payload, owner_context, db)
@@ -489,6 +491,8 @@ class CloudControlTests(unittest.TestCase):
             self.assertEqual(stored_snapshot.revision, 1)
             self.assertTrue(stored_snapshot.snapshot_b64.startswith("v1:"))
             self.assertNotEqual(stored_snapshot.snapshot_b64, payload.snapshot_b64)
+            self.assertEqual(stored_snapshot.financial_audit_hash, "a" * 64)
+            self.assertEqual(stored_snapshot.financial_audit_count, 7)
 
             downloaded = download_team_snapshot(accountant_context, db)
             self.assertEqual(downloaded["sha256"], checksum)
@@ -497,6 +501,45 @@ class CloudControlTests(unittest.TestCase):
                 download_team_snapshot(operator_context, db)
             self.assertEqual(rejected.exception.status_code, 403)
             self.assertTrue(_verify_workspace_audit_chain(db, workspace_id)["ok"])
+            audit_event = db.scalars(
+                select(WorkspaceAuditEvent)
+                .where(WorkspaceAuditEvent.workspace_id == workspace_id, WorkspaceAuditEvent.action == "team.sync_uploaded")
+                .order_by(WorkspaceAuditEvent.created_at.desc())
+            ).first()
+            self.assertIn('"financial_audit_count":7', audit_event.details_json if audit_event else "")
+        finally:
+            db.close()
+
+    def test_team_sync_rejects_an_invalid_financial_audit_anchor(self) -> None:
+        db = SessionLocal()
+        workspace_id = str(uuid.uuid4())
+        member_id = str(uuid.uuid4())
+        try:
+            workspace = Workspace(
+                id=workspace_id, owner_email="anchor-owner@example.test",
+                company_name="Test Company", plan_code="pro", subscription_status="active",
+            )
+            owner = WorkspaceMember(
+                id=member_id, workspace_id=workspace_id, email="anchor-owner@example.test",
+                display_name="Owner", role="owner", status="active",
+            )
+            session = MemberSession(
+                id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=member_id,
+                token_hash="anchor-owner", expires_at=utc_now() + timedelta(days=1),
+            )
+            db.add_all([workspace, owner, session])
+            db.commit()
+            raw_snapshot = b"anchor-check"
+            payload = UploadSyncSnapshot(
+                expected_revision=0,
+                snapshot_b64=base64.b64encode(raw_snapshot).decode("ascii"),
+                sha256=hashlib.sha256(raw_snapshot).hexdigest(),
+                financial_audit_hash="not-a-valid-anchor",
+                financial_audit_count=1,
+            )
+            with self.assertRaises(HTTPException) as rejected:
+                upload_team_snapshot(payload, MemberContext(workspace=workspace, member=owner, session=session), db)
+            self.assertEqual(rejected.exception.status_code, 422)
         finally:
             db.close()
 

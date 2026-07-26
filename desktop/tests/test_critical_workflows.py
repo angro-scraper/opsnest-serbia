@@ -485,7 +485,13 @@ class CriticalWorkflowTests(unittest.TestCase):
             self.db.restore_backup(invalid_backup)
 
     def test_team_sync_detects_unsent_local_changes_without_tracking_device_metadata(self) -> None:
+        # A brand-new company can legitimately have no financial audit events.
+        # Once a financial control occurs, its verified chain head must travel
+        # as metadata with the protected team revision.
+        self.db.record_financial_audit_export("QA Accountant", 1)
         snapshot = self.db.build_cloud_sync_snapshot()
+        self.assertEqual(len(snapshot["financial_audit_hash"]), 64)
+        self.assertGreater(int(snapshot["financial_audit_count"]), 0)
         self.db.mark_cloud_sync(4, snapshot["sha256"])
         clean = self.db.cloud_sync_change_status()
         self.assertTrue(clean["tracked"])

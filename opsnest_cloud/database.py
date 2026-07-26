@@ -270,6 +270,8 @@ class WorkspaceSyncSnapshot(Base):
     revision: Mapped[int] = mapped_column(Integer, default=0)
     snapshot_b64: Mapped[str] = mapped_column(Text, default="")
     sha256: Mapped[str] = mapped_column(String(64), default="")
+    financial_audit_hash: Mapped[str] = mapped_column(String(64), default="")
+    financial_audit_count: Mapped[int] = mapped_column(Integer, default=0)
     updated_by_member_id: Mapped[str] = mapped_column(String(36), default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), default=utc_now, onupdate=utc_now)
 
@@ -332,6 +334,18 @@ def create_schema() -> None:
             }
             if "attempts" not in invitation_existing:
                 connection.execute(text("ALTER TABLE team_invitations ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"))
+        if "workspace_sync_snapshots" in country_control_tables:
+            sync_existing = {
+                column["name"]
+                for column in inspect(engine).get_columns("workspace_sync_snapshots")
+            }
+            sync_additions = {
+                "financial_audit_hash": "VARCHAR(64) NOT NULL DEFAULT ''",
+                "financial_audit_count": "INTEGER NOT NULL DEFAULT 0",
+            }
+            for name, definition in sync_additions.items():
+                if name not in sync_existing:
+                    connection.execute(text(f"ALTER TABLE workspace_sync_snapshots ADD COLUMN {name} {definition}"))
 
 
 def get_session() -> Iterator[Session]:
