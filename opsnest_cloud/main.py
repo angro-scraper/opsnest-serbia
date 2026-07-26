@@ -154,6 +154,7 @@ WORKFLOW_TYPES = {"document", "payment", "vat", "review", "other"}
 WORKFLOW_STATUSES = {"open", "in_progress", "waiting", "returned", "done"}
 WORKFLOW_PRIORITIES = {"low", "normal", "high", "urgent"}
 WORKFLOW_MANAGER_ROLES = {"owner", "administrator", "project_manager", "accountant"}
+FINANCE_ROLES = {"owner", "administrator", "accountant"}
 DOCUMENT_TYPES = {"invoice", "receipt", "contract", "statement", "other"}
 COUNTRY_PACK_CONTROL_STATUSES = {"not_started", "in_review", "ready", "blocked", "not_applicable"}
 COUNTRY_PACKS = {
@@ -949,10 +950,23 @@ def _require_team_role(context: MemberContext, *allowed_roles: str) -> MemberCon
 
 
 def _require_team_sync(context: MemberContext) -> None:
+    """Allow the full shared database only to trusted financial roles.
+
+    A team snapshot can contain the complete local bookkeeping workspace. It is
+    therefore intentionally stricter than a normal portal view: operational
+    users work through assigned workflow items, while owners, administrators
+    and accountants may synchronize the protected desktop workspace.
+    """
     license_data = effective_license(context.workspace)
     features = set(plan_details(license_data["effective_plan_code"]).get("features") or set())
     if "team_users" not in features:
         raise HTTPException(status_code=403, detail="Shared team synchronization requires a Business or Pro package.")
+    _require_team_role(context, *FINANCE_ROLES)
+
+
+def _require_finance_role(context: MemberContext) -> MemberContext:
+    """Protect company-wide money totals from operational-only accounts."""
+    return _require_team_role(context, *FINANCE_ROLES)
 
 
 def _limit_desktop_activation(remote_ip: str) -> None:
@@ -1740,7 +1754,7 @@ def team_me(context: MemberContext = Depends(_member_dependency)) -> dict[str, A
             "manage_billing": context.member.role == "owner",
             "manage_team": context.member.role in {"owner", "administrator"},
             "manage_projects": context.member.role in {"owner", "administrator", "project_manager"},
-            "manage_accounting": context.member.role in {"owner", "administrator", "project_manager", "accountant"},
+            "manage_accounting": context.member.role in FINANCE_ROLES,
             "delete_documents": context.member.role in {"owner", "administrator", "project_manager", "accountant"},
         },
     }
@@ -1883,6 +1897,7 @@ def get_workspace_financial_overview(
     db: Session = Depends(get_session),
 ) -> dict[str, Any]:
     """Read the optional aggregate-only finance summary for this workspace."""
+    _require_finance_role(context)
     overview = db.get(WorkspaceFinancialOverview, context.workspace.id)
     if not overview:
         return {"summary": None, "message": "No Desktop financial summary has been synchronized yet."}
@@ -1915,7 +1930,7 @@ def upload_workspace_financial_overview(
     db: Session = Depends(get_session),
 ) -> dict[str, Any]:
     """Store explicit company-level totals; never rows, people or documents."""
-    _require_team_role(context, *WORKFLOW_MANAGER_ROLES)
+    _require_finance_role(context)
     summary = payload.model_dump()
     overview = db.get(WorkspaceFinancialOverview, context.workspace.id)
     if overview is None:
@@ -2258,8 +2273,19 @@ def upload_team_snapshot(
         raise HTTPException(status_code=413, detail="The synchronized database is larger than the 25 MB team limit.")
     if hashlib.sha256(raw_snapshot).hexdigest() != payload.sha256.lower():
         raise HTTPException(status_code=422, detail="The team snapshot checksum does not match.")
-    snapshot = db.get(WorkspaceSyncSnapshot, context.workspace.id)
+    # PostgreSQL locks the current revision for this transaction. Two desktops
+    # cannot both accept the same expected revision and silently lose work.
+    snapshot = db.scalar(
+        select(WorkspaceSyncSnapshot)
+        .where(WorkspaceSyncSnapshot.workspace_id == context.workspace.id)
+        .with_for_update()
+    )
     current_revision = int(snapshot.revision) if snapshot else 0
+    incoming_sha256 = payload.sha256.lower()
+    # A retry after a network interruption must be safe. If this exact content
+    # is already current, return success without a duplicate version or audit event.
+    if snapshot is not None and snapshot.sha256 == incoming_sha256:
+        return {"ok": True, "revision": current_revision, "sha256": snapshot.sha256, "unchanged": True}
     if payload.expected_revision != current_revision:
         raise HTTPException(
             status_code=409,
@@ -2270,7 +2296,7 @@ def upload_team_snapshot(
         db.add(snapshot)
     snapshot.revision = current_revision + 1
     snapshot.snapshot_b64 = payload.snapshot_b64
-    snapshot.sha256 = payload.sha256.lower()
+    snapshot.sha256 = incoming_sha256
     snapshot.updated_by_member_id = context.member.id
     snapshot.updated_at = datetime.utcnow()
     _record_audit(

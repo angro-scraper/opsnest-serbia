@@ -7,6 +7,8 @@ import sys
 import tempfile
 import unittest
 import uuid
+import base64
+import hashlib
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -30,6 +32,7 @@ from opsnest_cloud.database import (  # noqa: E402
     WorkspaceAuditEvent,
     WorkspaceFinancialOverview,
     WorkspaceMember,
+    WorkspaceSyncSnapshot,
     WorkflowComment,
     WorkflowItem,
     create_schema,
@@ -41,12 +44,18 @@ from opsnest_cloud.main import (  # noqa: E402
     _record_audit,
     _verify_workspace_audit_chain,
     export_team_audit_evidence,
+    FinancialOverviewUpload,
+    get_workspace_financial_overview,
     get_workspace_control_brief,
     app,
+    download_team_snapshot,
     get_country_pack_readiness,
     list_team_sessions,
     revoke_team_session,
     update_workflow_item,
+    upload_team_snapshot,
+    upload_workspace_financial_overview,
+    UploadSyncSnapshot,
     WorkflowItemUpdate,
     update_country_pack_readiness,
 )
@@ -198,6 +207,122 @@ class CloudControlTests(unittest.TestCase):
             self.assertTrue(revoke_team_session(stale_session.id, context, db)["ok"])
             after = list_team_sessions(context, db)
             self.assertEqual([item["id"] for item in after["sessions"]], [current_session.id])
+            self.assertTrue(_verify_workspace_audit_chain(db, workspace_id)["ok"])
+        finally:
+            db.close()
+
+    def test_team_sync_is_limited_to_finance_roles_and_retries_are_idempotent(self) -> None:
+        db = SessionLocal()
+        workspace_id = str(uuid.uuid4())
+        owner_id = str(uuid.uuid4())
+        accountant_id = str(uuid.uuid4())
+        operator_id = str(uuid.uuid4())
+        try:
+            workspace = Workspace(
+                id=workspace_id,
+                owner_email="sync-owner@example.test",
+                company_name="Test Company",
+                plan_code="pro",
+                subscription_status="active",
+            )
+            owner = WorkspaceMember(
+                id=owner_id, workspace_id=workspace_id, email="sync-owner@example.test",
+                display_name="Owner", role="owner", status="active",
+            )
+            accountant = WorkspaceMember(
+                id=accountant_id, workspace_id=workspace_id, email="accountant@example.test",
+                display_name="Accountant", role="accountant", status="active",
+            )
+            operator = WorkspaceMember(
+                id=operator_id, workspace_id=workspace_id, email="operator@example.test",
+                display_name="Operator", role="operator", status="active",
+            )
+            owner_session = MemberSession(
+                id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=owner_id,
+                token_hash="sync-owner", expires_at=datetime.utcnow() + timedelta(days=1),
+            )
+            accountant_session = MemberSession(
+                id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=accountant_id,
+                token_hash="sync-accountant", expires_at=datetime.utcnow() + timedelta(days=1),
+            )
+            operator_session = MemberSession(
+                id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=operator_id,
+                token_hash="sync-operator", expires_at=datetime.utcnow() + timedelta(days=1),
+            )
+            db.add_all([workspace, owner, accountant, operator, owner_session, accountant_session, operator_session])
+            db.commit()
+            owner_context = MemberContext(workspace=workspace, member=owner, session=owner_session)
+            accountant_context = MemberContext(workspace=workspace, member=accountant, session=accountant_session)
+            operator_context = MemberContext(workspace=workspace, member=operator, session=operator_session)
+            raw_snapshot = b"encrypted-desktop-workspace-payload"
+            checksum = hashlib.sha256(raw_snapshot).hexdigest()
+            payload = UploadSyncSnapshot(
+                expected_revision=0,
+                snapshot_b64=base64.b64encode(raw_snapshot).decode("ascii"),
+                sha256=checksum,
+            )
+
+            first_upload = upload_team_snapshot(payload, owner_context, db)
+            self.assertEqual(first_upload["revision"], 1)
+            self.assertNotIn("unchanged", first_upload)
+            retry_upload = upload_team_snapshot(payload, owner_context, db)
+            self.assertEqual(retry_upload, {"ok": True, "revision": 1, "sha256": checksum, "unchanged": True})
+            self.assertEqual(db.query(WorkspaceSyncSnapshot).filter_by(workspace_id=workspace_id).one().revision, 1)
+
+            downloaded = download_team_snapshot(accountant_context, db)
+            self.assertEqual(downloaded["sha256"], checksum)
+            self.assertEqual(downloaded["snapshot_b64"], payload.snapshot_b64)
+            with self.assertRaises(HTTPException) as rejected:
+                download_team_snapshot(operator_context, db)
+            self.assertEqual(rejected.exception.status_code, 403)
+            self.assertTrue(_verify_workspace_audit_chain(db, workspace_id)["ok"])
+        finally:
+            db.close()
+
+    def test_financial_overview_is_visible_and_writable_only_to_finance_roles(self) -> None:
+        db = SessionLocal()
+        workspace_id = str(uuid.uuid4())
+        accountant_id = str(uuid.uuid4())
+        project_manager_id = str(uuid.uuid4())
+        try:
+            workspace = Workspace(
+                id=workspace_id,
+                owner_email="finance-owner@example.test",
+                company_name="Test Company",
+                plan_code="pro",
+                subscription_status="active",
+            )
+            accountant = WorkspaceMember(
+                id=accountant_id, workspace_id=workspace_id, email="finance-accountant@example.test",
+                display_name="Accountant", role="accountant", status="active",
+            )
+            project_manager = WorkspaceMember(
+                id=project_manager_id, workspace_id=workspace_id, email="finance-project@example.test",
+                display_name="Project manager", role="project_manager", status="active",
+            )
+            accountant_session = MemberSession(
+                id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=accountant_id,
+                token_hash="finance-accountant", expires_at=datetime.utcnow() + timedelta(days=1),
+            )
+            project_session = MemberSession(
+                id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=project_manager_id,
+                token_hash="finance-project", expires_at=datetime.utcnow() + timedelta(days=1),
+            )
+            db.add_all([workspace, accountant, project_manager, accountant_session, project_session])
+            db.commit()
+            accountant_context = MemberContext(workspace=workspace, member=accountant, session=accountant_session)
+            project_context = MemberContext(workspace=workspace, member=project_manager, session=project_session)
+            payload = FinancialOverviewUpload(currency="EUR", income_net=1250, expense_net=250, profit_net=1000)
+
+            result = upload_workspace_financial_overview(payload, accountant_context, db)
+            self.assertEqual(result["currency"], "EUR")
+            self.assertEqual(get_workspace_financial_overview(accountant_context, db)["summary"]["profit_net"], 1000)
+            with self.assertRaises(HTTPException) as read_rejected:
+                get_workspace_financial_overview(project_context, db)
+            self.assertEqual(read_rejected.exception.status_code, 403)
+            with self.assertRaises(HTTPException) as write_rejected:
+                upload_workspace_financial_overview(payload, project_context, db)
+            self.assertEqual(write_rejected.exception.status_code, 403)
             self.assertTrue(_verify_workspace_audit_chain(db, workspace_id)["ok"])
         finally:
             db.close()

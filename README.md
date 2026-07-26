@@ -79,6 +79,21 @@ desktop database. Invoices, financial records, attachments and accounting
 snapshots are not rendered in the portal until a dedicated country-specific
 cloud module is built and reviewed.
 
+Shared Desktop synchronization is deliberately more restricted than the
+portal: it is available only on Business or Pro to the owner, administrator
+or accountant roles. A synchronized snapshot may contain the full local
+financial workspace, so operators and project managers cannot read or replace
+it. Uploads use a checksum and an optimistic revision check; an interrupted
+retry of the exact same revision is acknowledged without creating a duplicate
+revision or audit event, while a different stale upload is rejected and must
+first download the current workspace revision.
+
+The aggregate financial control board follows the same separation of duties.
+Only the owner, administrator or accountant may read or synchronize company
+cash-flow, payable, receivable and profit totals. Project managers and
+operators can still manage their assigned work, documents and operational
+tasks, but cannot see or overwrite company-wide finance aggregates.
+
 The portal also provides password recovery for an active team account. A
 six-digit recovery code is sent only to the member's registered business
 e-mail, expires after 15 minutes, accepts at most five attempts and revokes
