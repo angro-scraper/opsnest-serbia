@@ -91,6 +91,11 @@ team members can add operational comments. The queue keeps only task metadata,
 deadlines and comments, never invoice files, payment credentials or accounting
 snapshots.
 
+Owners and administrators can also see the active device sessions for their
+workspace and revoke one specific device immediately. The view shows only the
+member name, device label and session timing; tokens, passwords and IP data are
+not exposed. Each device revocation is added to the workspace audit chain.
+
 Owners and administrators can also review the company control trail in the
 portal. It records the time, action and responsible team account for relevant
 workspace, team, password-recovery, sync and workflow events, while keeping

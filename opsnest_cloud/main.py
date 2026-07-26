@@ -508,6 +508,20 @@ def _serialize_member(member: WorkspaceMember) -> dict[str, Any]:
     }
 
 
+def _serialize_member_session(db: Session, session: MemberSession, current_session_id: str = "") -> dict[str, Any]:
+    member = _active_workspace_member(db, session.workspace_id, session.member_id)
+    return {
+        "id": session.id,
+        "member_id": session.member_id,
+        "member_name": member.display_name or member.email if member else "Former member",
+        "device_name": session.device_name,
+        "created_at": session.created_at.isoformat(timespec="seconds"),
+        "last_seen_at": session.last_seen_at.isoformat(timespec="seconds"),
+        "expires_at": session.expires_at.isoformat(timespec="seconds"),
+        "current": session.id == current_session_id,
+    }
+
+
 def _workspace_overview(db: Session, context: MemberContext) -> dict[str, Any]:
     """Safe platform data only; financial documents never leave the desktop here."""
     workspace = context.workspace
@@ -728,7 +742,7 @@ def _new_member_session(db: Session, member: WorkspaceMember, device_name: str) 
     )
     member.last_login_at = now
     db.add(session)
-    return {"member_id": member.id, "member_token": token, "member_role": member.role}
+    return {"member_id": member.id, "member_token": token, "member_role": member.role, "session_id": session.id}
 
 
 @dataclass(frozen=True)
@@ -1167,6 +1181,60 @@ def list_team_members(
         "seats_used": _team_seats_used(db, context.workspace.id),
         "can_manage": True,
     }
+
+
+@app.get("/v1/team/sessions")
+def list_team_sessions(
+    context: MemberContext = Depends(_member_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Minimal device/session inventory for owners and administrators."""
+    _require_team_role(context, "owner", "administrator")
+    sessions = db.scalars(
+        select(MemberSession)
+        .where(
+            MemberSession.workspace_id == context.workspace.id,
+            MemberSession.revoked_at.is_(None),
+            MemberSession.expires_at > datetime.utcnow(),
+        )
+        .order_by(MemberSession.last_seen_at.desc(), MemberSession.created_at.desc())
+        .limit(100)
+    ).all()
+    return {
+        "sessions": [_serialize_member_session(db, session, context.session.id) for session in sessions],
+        "can_manage": True,
+    }
+
+
+@app.post("/v1/team/sessions/{session_id}/revoke")
+def revoke_team_session(
+    session_id: str,
+    context: MemberContext = Depends(_member_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, bool]:
+    """Immediately revoke one lost or no-longer-needed device session."""
+    _require_team_role(context, "owner", "administrator")
+    session = db.scalar(
+        select(MemberSession).where(
+            MemberSession.id == str(session_id or "").strip(),
+            MemberSession.workspace_id == context.workspace.id,
+            MemberSession.revoked_at.is_(None),
+        )
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Active device session was not found.")
+    session.revoked_at = datetime.utcnow()
+    _record_audit(
+        db,
+        workspace_id=context.workspace.id,
+        actor_member_id=context.member.id,
+        action="team.session_revoked",
+        entity_type="member_session",
+        entity_id=session.id,
+        details={"member_id": session.member_id, "self_revoke": session.id == context.session.id},
+    )
+    db.commit()
+    return {"ok": True}
 
 
 @app.post("/v1/team/invitations")

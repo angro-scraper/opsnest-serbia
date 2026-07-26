@@ -40,7 +40,10 @@ class Workspace(Base):
     trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
     subscription_status: Mapped[str] = mapped_column(String(32), default="verification_pending", index=True)
     plan_code: Mapped[str] = mapped_column(String(32), default="starter")
-    paypal_subscription_id: Mapped[str] = mapped_column(String(128), unique=True, default="")
+    # A unique subscription ID must be NULL until PayPal assigns a real one.
+    # Using one shared empty string would allow only a single unpaid workspace
+    # on databases that enforce the unique constraint.
+    paypal_subscription_id: Mapped[str | None] = mapped_column(String(128), unique=True, nullable=True)
     ai_advisor_status: Mapped[str] = mapped_column(String(32), default="disabled", index=True)
     ai_advisor_tier: Mapped[str] = mapped_column(String(32), default="")
     ai_advisor_paypal_subscription_id: Mapped[str] = mapped_column(String(128), default="", index=True)
@@ -289,6 +292,10 @@ def create_schema() -> None:
         for name, definition in additions.items():
             if name not in existing:
                 connection.execute(text(f"ALTER TABLE workspaces ADD COLUMN {name} {definition}"))
+        # Existing releases used an empty string for a not-yet-assigned PayPal
+        # ID. Convert it to NULL so the unique index permits many workspaces
+        # that have not subscribed yet.
+        connection.execute(text("UPDATE workspaces SET paypal_subscription_id = NULL WHERE paypal_subscription_id = ''"))
         audit_existing = {
             column["name"]
             for column in inspect(engine).get_columns("workspace_audit_events")

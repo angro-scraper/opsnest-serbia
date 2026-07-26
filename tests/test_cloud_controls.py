@@ -38,6 +38,8 @@ from opsnest_cloud.main import (  # noqa: E402
     _verify_workspace_audit_chain,
     app,
     get_country_pack_readiness,
+    list_team_sessions,
+    revoke_team_session,
     update_country_pack_readiness,
 )
 
@@ -89,7 +91,7 @@ class CloudControlTests(unittest.TestCase):
         try:
             workspace = Workspace(
                 id=workspace_id,
-                owner_email="owner@example.test",
+                owner_email="readiness-owner@example.test",
                 company_name="Test Company",
                 country_code="RS",
                 default_currency="RSD",
@@ -98,7 +100,7 @@ class CloudControlTests(unittest.TestCase):
             member = WorkspaceMember(
                 id=member_id,
                 workspace_id=workspace_id,
-                email="owner@example.test",
+                email="readiness-owner@example.test",
                 display_name="Owner",
                 role="owner",
                 status="active",
@@ -135,6 +137,50 @@ class CloudControlTests(unittest.TestCase):
             switched_country = get_country_pack_readiness(context, db)
             switched_controls = {control["key"]: control for control in switched_country["controls"]}
             self.assertEqual(switched_controls["e_invoice"]["status"], "not_started")
+            self.assertTrue(_verify_workspace_audit_chain(db, workspace_id)["ok"])
+        finally:
+            db.close()
+
+    def test_owner_can_revoke_one_device_session_with_audit(self) -> None:
+        db = SessionLocal()
+        workspace_id = str(uuid.uuid4())
+        member_id = str(uuid.uuid4())
+        try:
+            workspace = Workspace(
+                id=workspace_id,
+                owner_email="devices-owner@example.test",
+                company_name="Test Company",
+                country_code="INTL",
+                subscription_status="active",
+            )
+            owner = WorkspaceMember(
+                id=member_id,
+                workspace_id=workspace_id,
+                email="devices-owner@example.test",
+                display_name="Owner",
+                role="owner",
+                status="active",
+            )
+            current_session = MemberSession(
+                id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=member_id,
+                token_hash="current", device_name="Owner desktop", expires_at=datetime.utcnow() + timedelta(days=1),
+            )
+            stale_session = MemberSession(
+                id=str(uuid.uuid4()), workspace_id=workspace_id, member_id=member_id,
+                token_hash="stale", device_name="Lost laptop", expires_at=datetime.utcnow() + timedelta(days=1),
+            )
+            db.add_all([workspace, owner, current_session, stale_session])
+            db.commit()
+            context = MemberContext(workspace=workspace, member=owner, session=current_session)
+
+            before = list_team_sessions(context, db)
+            self.assertEqual(len(before["sessions"]), 2)
+            self.assertTrue(next(item for item in before["sessions"] if item["id"] == current_session.id)["current"])
+            self.assertFalse(next(item for item in before["sessions"] if item["id"] == stale_session.id)["current"])
+
+            self.assertTrue(revoke_team_session(stale_session.id, context, db)["ok"])
+            after = list_team_sessions(context, db)
+            self.assertEqual([item["id"] for item in after["sessions"]], [current_session.id])
             self.assertTrue(_verify_workspace_audit_chain(db, workspace_id)["ok"])
         finally:
             db.close()
