@@ -64,6 +64,11 @@ from opsnest_cloud.main import (  # noqa: E402
     UploadSyncSnapshot,
     WorkflowItemUpdate,
     update_country_pack_readiness,
+    TeamLogin,
+    team_login,
+    _TEAM_LOGIN_LIMIT,
+    _team_login_attempts,
+    _team_login_lock,
 )
 from opsnest_cloud.document_storage import (  # noqa: E402
     document_storage_status,
@@ -116,6 +121,41 @@ class CloudControlTests(unittest.TestCase):
         self.assertEqual(response.headers["cache-control"], "no-store")
         self.assertEqual(response.headers["x-frame-options"], "DENY")
         self.assertIn("frame-ancestors 'none'", response.headers["content-security-policy"])
+
+    def test_team_login_rate_limit_blocks_repeated_wrong_passwords_without_exposing_account(self) -> None:
+        db = SessionLocal()
+        workspace_id = str(uuid.uuid4())
+        member_id = str(uuid.uuid4())
+        request = SimpleNamespace(client=SimpleNamespace(host="203.0.113.44"))
+        payload = TeamLogin(
+            workspace_id=workspace_id,
+            email="login-owner@example.test",
+            password="wrong-password",
+            device_name="QA desktop",
+        )
+        try:
+            workspace = Workspace(
+                id=workspace_id, owner_email="login-owner@example.test",
+                company_name="Test Company", subscription_status="active",
+            )
+            member = WorkspaceMember(
+                id=member_id, workspace_id=workspace_id, email="login-owner@example.test",
+                display_name="Login owner", role="owner", status="active", password_hash="not-the-password",
+            )
+            db.add_all([workspace, member])
+            db.commit()
+            for _ in range(_TEAM_LOGIN_LIMIT):
+                with self.assertRaises(HTTPException) as rejected:
+                    team_login(payload, request, db)
+                self.assertEqual(rejected.exception.status_code, 401)
+            with self.assertRaises(HTTPException) as rate_limited:
+                team_login(payload, request, db)
+            self.assertEqual(rate_limited.exception.status_code, 429)
+            self.assertIn("Wait 15 minutes", rate_limited.exception.detail)
+        finally:
+            with _team_login_lock:
+                _team_login_attempts.clear()
+            db.close()
 
     def test_document_storage_validates_real_file_signatures_and_safe_names(self) -> None:
         """The private bucket must never trust a browser supplied MIME type/name."""

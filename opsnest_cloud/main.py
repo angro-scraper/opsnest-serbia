@@ -331,6 +331,14 @@ _ai_advice_lock = Lock()
 _AI_ADVICE_WINDOW = timedelta(hours=1)
 _AI_ADVICE_LIMIT = 12
 
+# Keep repeated password guessing bounded without recording a failed login in
+# the business audit trail. The key is memory-only and combines the workspace,
+# normalized address and transport peer; it expires automatically.
+_team_login_attempts: dict[str, deque[datetime]] = defaultdict(deque)
+_team_login_lock = Lock()
+_TEAM_LOGIN_WINDOW = timedelta(minutes=15)
+_TEAM_LOGIN_LIMIT = 8
+
 
 class RecordPayPalApproval(BaseModel):
     session: str = Field(min_length=20, max_length=2048)
@@ -387,6 +395,40 @@ def _normalize_email(value: str) -> str:
     if "@" not in email or email.startswith("@") or email.endswith("@"):
         raise HTTPException(status_code=422, detail="Enter a valid e-mail address.")
     return email
+
+
+def _team_login_attempt_key(request: Request, workspace_id: str, email: str) -> str:
+    client = getattr(request, "client", None)
+    remote_ip = str(getattr(client, "host", "") or "unknown")
+    # Hash the ephemeral key so diagnostic memory never keeps a raw business
+    # e-mail address. This is not a credential or persistent user profile.
+    return hashlib.sha256(f"{remote_ip}\n{workspace_id}\n{email}".encode("utf-8")).hexdigest()
+
+
+def _check_team_login_rate(key: str) -> None:
+    now = utc_now()
+    with _team_login_lock:
+        attempts = _team_login_attempts[key]
+        cutoff = now - _TEAM_LOGIN_WINDOW
+        while attempts and attempts[0] <= cutoff:
+            attempts.popleft()
+        if len(attempts) >= _TEAM_LOGIN_LIMIT:
+            raise HTTPException(status_code=429, detail="Too many sign-in attempts. Wait 15 minutes or reset the password.")
+
+
+def _record_failed_team_login(key: str) -> None:
+    now = utc_now()
+    with _team_login_lock:
+        attempts = _team_login_attempts[key]
+        cutoff = now - _TEAM_LOGIN_WINDOW
+        while attempts and attempts[0] <= cutoff:
+            attempts.popleft()
+        attempts.append(now)
+
+
+def _clear_team_login_attempts(key: str) -> None:
+    with _team_login_lock:
+        _team_login_attempts.pop(key, None)
 
 
 def _normalize_team_role(value: str) -> str:
@@ -1695,9 +1737,11 @@ def revoke_team_member(
 
 
 @app.post("/v1/team/login")
-def team_login(payload: TeamLogin, db: Session = Depends(get_session)) -> dict[str, Any]:
+def team_login(payload: TeamLogin, request: Request, db: Session = Depends(get_session)) -> dict[str, Any]:
     workspace_id = _validate_workspace_id(payload.workspace_id)
     email = _normalize_email(payload.email)
+    attempt_key = _team_login_attempt_key(request, workspace_id, email)
+    _check_team_login_rate(attempt_key)
     member = db.scalar(
         select(WorkspaceMember).where(
             WorkspaceMember.workspace_id == workspace_id,
@@ -1706,7 +1750,9 @@ def team_login(payload: TeamLogin, db: Session = Depends(get_session)) -> dict[s
     )
     workspace = db.get(Workspace, workspace_id)
     if not workspace or not member or member.status != "active" or not verify_password(payload.password, member.password_hash):
+        _record_failed_team_login(attempt_key)
         raise HTTPException(status_code=401, detail="E-mail or password is not correct.")
+    _clear_team_login_attempts(attempt_key)
     _record_audit(
         db,
         workspace_id=workspace.id,
