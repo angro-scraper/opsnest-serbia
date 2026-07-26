@@ -84,6 +84,15 @@ class CloudControlTests(unittest.TestCase):
         self.assertEqual(response.headers["x-frame-options"], "DENY")
         self.assertIn("frame-ancestors 'none'", response.headers["content-security-policy"])
 
+    def test_readiness_checks_database_without_exposing_configuration(self) -> None:
+        with TestClient(app) as client:
+            response = client.get("/health/ready")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "ready")
+        self.assertEqual(response.json()["database"], "ok")
+        self.assertNotIn("DATABASE_URL", response.text)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+
     def test_country_pack_readiness_is_accountable_not_a_compliance_claim(self) -> None:
         db = SessionLocal()
         workspace_id = str(uuid.uuid4())

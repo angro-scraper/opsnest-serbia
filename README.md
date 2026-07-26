@@ -154,3 +154,7 @@ uvicorn opsnest_cloud.main:app --reload
 ```
 
 Check `http://localhost:8000/health` after startup.
+
+For production monitoring, use `GET /health/ready`. It checks the database
+connection and returns only a small readiness state; it never exposes database
+URLs, tenant data, storage credentials or other configuration secrets.

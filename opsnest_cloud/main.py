@@ -892,6 +892,31 @@ def health() -> dict[str, str]:
     return {"status": "ok", "service": "opsnest-cloud"}
 
 
+@app.get("/health/ready")
+def readiness(db: Session = Depends(get_session)) -> JSONResponse:
+    """Readiness check for monitoring without exposing configuration or data.
+
+    `/health` is a cheap liveness probe.  This route is deliberately separate
+    so monitoring can detect a broken database connection or startup migration
+    without ever receiving invoice, tenant, storage or credential details.
+    """
+    try:
+        db.execute(select(1))
+    except Exception:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "not_ready", "service": "opsnest-cloud", "database": "unavailable"},
+        )
+    return JSONResponse(
+        content={
+            "status": "ready",
+            "service": "opsnest-cloud",
+            "database": "ok",
+            "document_storage": "enabled" if document_storage_status()["enabled"] else "not_configured",
+        }
+    )
+
+
 @app.get("/admin", response_class=HTMLResponse)
 def admin_console(request: Request) -> HTMLResponse:
     """Private platform console. It remains disabled until Render configures it."""
