@@ -1473,7 +1473,7 @@ OPSNEST_WEBSITE_URL = "https://opsnestone.com"
 OPSNEST_CLOUD_API_URL = "https://api.opsnestone.com"
 OPSNEST_PRICING_URL = f"{OPSNEST_WEBSITE_URL}/pricing"
 OPSNEST_PAYPAL_CANCELLATION_URL = "https://www.paypal.com/myaccount/autopay/"
-OPSNEST_APP_VERSION = "2.13.5"
+OPSNEST_APP_VERSION = "2.13.6"
 
 
 def normalize_ui_language(value: Any) -> str:
@@ -2800,7 +2800,13 @@ class MainApp(tk.Tk):
             return None
         return connection, workspace_id
 
-    def download_team_data(self, *, parent: tk.Widget, confirm: bool = True) -> bool:
+    def download_team_data(
+        self,
+        *,
+        parent: tk.Widget,
+        confirm: bool = True,
+        allow_empty_owner_workspace: bool = False,
+    ) -> bool:
         """Safely replace this device's data with the latest shared revision."""
         ready = self.team_connection_ready()
         if not ready:
@@ -2824,6 +2830,14 @@ class MainApp(tk.Tk):
         revision = int(payload.get("revision") or 0)
         if revision <= 0 or not payload.get("snapshot_b64"):
             self.db.mark_cloud_sync(0, "")
+            if allow_empty_owner_workspace and self.active_team_role() in {"owner", "administrator"}:
+                messagebox.showinfo(
+                    "OpsNest tim",
+                    "Prijavljeni ste kao vlasnik / administrator. Zajednički prostor još nema "
+                    "poslate podatke, ali možete odmah otvoriti Desktop i postaviti početni profil firme.",
+                    parent=parent,
+                )
+                return True
             messagebox.showinfo(
                 "OpsNest tim",
                 "Zajednički prostor je prazan. Vlasnik ili administrator prvo treba da pošalje podatke sa početnog računara.",
@@ -6014,9 +6028,14 @@ class TeamSignInDialog(tk.Toplevel):
             member_name=str(member.get("display_name") or ""),
         )
         self.destroy()
-        if self.app.download_team_data(parent=self.app, confirm=True):
+        if self.app.download_team_data(parent=self.app, confirm=True, allow_empty_owner_workspace=True):
             self.app.activate_workspace()
-            messagebox.showinfo("OpsNest", "Prijava je uspešna. Zajednički podaci su preuzeti na ovaj računar.", parent=self.app)
+            messagebox.showinfo(
+                "OpsNest",
+                "Prijava je uspešna. Ako je radni prostor bio prazan, sada možete uneti početni profil firme; "
+                "u suprotnom su zajednički podaci preuzeti na ovaj računar.",
+                parent=self.app,
+            )
 
     def sign_in(self) -> None:
         workspace_id, email, password = self.login_workspace_var.get().strip(), self.login_email_var.get().strip(), self.login_password_var.get()
