@@ -161,6 +161,21 @@ class CloudControlTests(unittest.TestCase):
             self.assertEqual(controls["e_invoice"]["status"], "in_review")
             self.assertEqual(db.query(CountryPackControl).filter_by(workspace_id=workspace_id).count(), 1)
 
+            project_manager = WorkspaceMember(
+                id=str(uuid.uuid4()), workspace_id=workspace_id, email="readiness-project@example.test",
+                display_name="Project manager", role="project_manager", status="active",
+            )
+            project_context = MemberContext(workspace=workspace, member=project_manager, session=session)
+            self.assertFalse(get_country_pack_readiness(project_context, db)["can_manage"])
+            with self.assertRaises(HTTPException) as rejected:
+                update_country_pack_readiness(
+                    "e_invoice",
+                    CountryPackControlUpdate(status="ready", owner_member_id=member_id, note="Not permitted."),
+                    project_context,
+                    db,
+                )
+            self.assertEqual(rejected.exception.status_code, 403)
+
             workspace.country_code = "BG"
             db.commit()
             switched_country = get_country_pack_readiness(context, db)

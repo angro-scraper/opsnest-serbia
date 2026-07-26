@@ -1881,7 +1881,7 @@ def get_country_pack_readiness(
             for definition in definitions
         ],
         "members": [_serialize_member(member) for member in active_members],
-        "can_manage": context.member.role in WORKFLOW_MANAGER_ROLES,
+        "can_manage": context.member.role in FINANCE_ROLES,
     }
 
 
@@ -1893,7 +1893,7 @@ def update_country_pack_readiness(
     db: Session = Depends(get_session),
 ) -> dict[str, Any]:
     """Assign and record local-readiness work with an accountable audit entry."""
-    _require_team_role(context, *WORKFLOW_MANAGER_ROLES)
+    _require_finance_role(context)
     country_code = _normalize_country_code(context.workspace.country_code)
     definitions = {definition["key"]: definition for definition in _country_pack_controls(country_code)}
     definition = definitions.get(str(control_key or "").strip())

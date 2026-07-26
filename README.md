@@ -110,6 +110,12 @@ sync route; the database contains a versioned ciphertext, not an ordinary
 Base64 copy of the local database. Legacy unencrypted snapshots are never
 served and must be uploaded again after the protected-sync update.
 
+The country-pack readiness register is controlled separately from ordinary
+project work. Only the owner, administrator or accountant may mark local
+e-invoice, VAT-period or archive controls as reviewed, ready or blocked. A
+project manager can coordinate a work item but cannot state that a statutory
+or local-accounting control is ready for activation.
+
 The portal also provides password recovery for an active team account. A
 six-digit recovery code is sent only to the member's registered business
 e-mail, expires after 15 minutes, accepts at most five attempts and revokes
