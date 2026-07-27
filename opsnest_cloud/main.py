@@ -1904,6 +1904,17 @@ def team_me(context: MemberContext = Depends(_member_dependency)) -> dict[str, A
     }
 
 
+@app.get("/v1/team/license")
+def team_license_status(context: MemberContext = Depends(_member_dependency)) -> dict[str, Any]:
+    """Return the safe effective entitlement for a signed-in team device.
+
+    Team devices deliberately never receive the legacy workspace billing token.
+    They still need the effective package to apply local feature limits, so this
+    endpoint exposes only the same license summary returned by ``/v1/license``.
+    """
+    return effective_license(context.workspace)
+
+
 @app.get("/v1/workspace/overview")
 def workspace_overview(
     context: MemberContext = Depends(_member_dependency),

@@ -167,6 +167,13 @@ class OpsNestCloudClient:
             headers=self._member_headers(workspace_id, member_id, member_token),
         )
 
+    def team_license_status(self, *, workspace_id: str, member_id: str, member_token: str) -> dict[str, Any]:
+        """Read the effective package through a revocable team-device session."""
+        return self._request(
+            "/v1/team/license",
+            headers=self._member_headers(workspace_id, member_id, member_token),
+        )
+
     def download_team_snapshot(self, *, workspace_id: str, member_id: str, member_token: str) -> dict[str, Any]:
         return self._request(
             "/v1/team/sync",

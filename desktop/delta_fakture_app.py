@@ -1473,7 +1473,7 @@ OPSNEST_WEBSITE_URL = "https://opsnestone.com"
 OPSNEST_CLOUD_API_URL = "https://api.opsnestone.com"
 OPSNEST_PRICING_URL = f"{OPSNEST_WEBSITE_URL}/pricing"
 OPSNEST_PAYPAL_CANCELLATION_URL = "https://www.paypal.com/myaccount/autopay/"
-OPSNEST_APP_VERSION = "2.13.7"
+OPSNEST_APP_VERSION = "2.13.8"
 
 
 def normalize_ui_language(value: Any) -> str:
@@ -2688,11 +2688,24 @@ class MainApp(tk.Tk):
         connection = connection or self.db.cloud_connection()
         subscription = self.db.get_subscription()
         try:
-            client = OpsNestCloudClient(OPSNEST_CLOUD_API_URL)
-            license_data = client.license_status(
-                workspace_id=str(subscription["workspace_id"]),
-                workspace_token=connection["workspace_token"],
-            )
+            client = OpsNestCloudClient(connection.get("api_url") or OPSNEST_CLOUD_API_URL)
+            workspace_id = str(subscription["workspace_id"])
+            if connection.get("workspace_token"):
+                license_data = client.license_status(
+                    workspace_id=workspace_id,
+                    workspace_token=connection["workspace_token"],
+                )
+            elif connection.get("member_id") and connection.get("member_token"):
+                # Team devices intentionally do not retain the legacy billing
+                # token. Their revocable central session supplies the same safe
+                # entitlement summary without exposing billing credentials.
+                license_data = client.team_license_status(
+                    workspace_id=workspace_id,
+                    member_id=connection["member_id"],
+                    member_token=connection["member_token"],
+                )
+            else:
+                raise CloudApiError("Prvo se prijavite centralnim nalogom firme da bi licenca mogla da se osveži.")
             self.db.apply_subscription_update(
                 status=str(license_data.get("status") or "verification_pending"),
                 plan_code=str(license_data.get("plan_code") or "starter"),
@@ -3230,6 +3243,10 @@ class MainApp(tk.Tk):
         self.projects_tab.refresh()
         self.update_idletasks()
         self._startup_refresh_job = self.after(80, self._refresh_secondary_tabs_after_startup)
+        # A centralized owner or team session also refreshes the entitlement.
+        # This lets a linked device receive Founder/Pro access without storing
+        # the legacy workspace billing token locally.
+        self.after(900, lambda: self.refresh_online_license(silent=True))
         # A non-blocking check keeps releases discoverable without slowing login.
         self.after(1800, self.check_for_updates_silently)
         # Safe automations never issue documents: recurring invoices stay drafts,

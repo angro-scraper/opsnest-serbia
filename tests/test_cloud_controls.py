@@ -46,6 +46,8 @@ from opsnest_cloud.database import (  # noqa: E402
 from opsnest_cloud.main import (  # noqa: E402
     CountryPackControlUpdate,
     MemberContext,
+    _member_dependency,
+    _new_member_session,
     _record_audit,
     _verify_workspace_audit_chain,
     _workspace_overview,
@@ -69,6 +71,7 @@ from opsnest_cloud.main import (  # noqa: E402
     AcceptTeamInvitation,
     accept_team_invitation,
     team_login,
+    team_license_status,
     _TEAM_LOGIN_LIMIT,
     _team_login_attempts,
     _team_login_lock,
@@ -125,6 +128,42 @@ class CloudControlTests(unittest.TestCase):
         self.assertEqual(response.headers["cache-control"], "no-store")
         self.assertEqual(response.headers["x-frame-options"], "DENY")
         self.assertIn("frame-ancestors 'none'", response.headers["content-security-policy"])
+
+    def test_team_session_can_read_effective_license_without_workspace_token(self) -> None:
+        db = SessionLocal()
+        workspace_id = str(uuid.uuid4())
+        member_id = str(uuid.uuid4())
+        try:
+            workspace = Workspace(
+                id=workspace_id,
+                owner_email="license-owner@example.test",
+                company_name="License Company",
+                subscription_status="active",
+                plan_code="pro",
+            )
+            member = WorkspaceMember(
+                id=member_id,
+                workspace_id=workspace_id,
+                email="license-owner@example.test",
+                display_name="License owner",
+                role="owner",
+                status="active",
+            )
+            db.add_all([workspace, member])
+            db.flush()
+            session_data = _new_member_session(db, member, "QA desktop")
+            db.commit()
+            context = _member_dependency(
+                db=db,
+                workspace_id=workspace_id,
+                team_member_id=member_id,
+                authorization=f"Bearer {session_data['member_token']}",
+            )
+            license_data = team_license_status(context)
+            self.assertEqual(license_data["effective_plan_code"], "pro")
+            self.assertTrue(license_data["can_write"])
+        finally:
+            db.close()
 
     def test_team_login_rate_limit_blocks_repeated_wrong_passwords_without_exposing_account(self) -> None:
         db = SessionLocal()
