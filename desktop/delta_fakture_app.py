@@ -1473,7 +1473,7 @@ OPSNEST_WEBSITE_URL = "https://opsnestone.com"
 OPSNEST_CLOUD_API_URL = "https://api.opsnestone.com"
 OPSNEST_PRICING_URL = f"{OPSNEST_WEBSITE_URL}/pricing"
 OPSNEST_PAYPAL_CANCELLATION_URL = "https://www.paypal.com/myaccount/autopay/"
-OPSNEST_APP_VERSION = "2.13.6"
+OPSNEST_APP_VERSION = "2.13.7"
 
 
 def normalize_ui_language(value: Any) -> str:
@@ -2472,6 +2472,20 @@ class MainApp(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self._build_access_gate()
         self.after_idle(self._maximize_window)
+        self.after_idle(self._restore_saved_team_session)
+
+    def _restore_saved_team_session(self) -> None:
+        """Open a previously authenticated workspace on this trusted device.
+
+        The server-issued member session is already DPAPI-protected in the
+        local database and is independently revocable by the owner.  The
+        password is never stored.  If the session was revoked or belongs to a
+        different Windows account, ``cloud_connection`` safely clears it and
+        leaves the normal sign-in card visible.
+        """
+        if self._workspace_built or not self.db.has_persisted_team_session():
+            return
+        self.activate_workspace()
 
     def _build_access_gate(self) -> None:
         if self._access_gate is not None and self._access_gate.winfo_exists():

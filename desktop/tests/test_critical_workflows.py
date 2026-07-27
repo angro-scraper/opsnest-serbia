@@ -591,6 +591,22 @@ class CriticalWorkflowTests(unittest.TestCase):
         self.assertTrue(upgraded[0].startswith(expected_prefix))
         self.assertTrue(upgraded[1].startswith(expected_prefix))
 
+    def test_saved_team_session_is_available_only_on_the_current_device_profile(self) -> None:
+        self.db.save_cloud_connection(
+            api_url="https://api.example.invalid",
+            workspace_token="qa-workspace-token",
+            owner_email="owner@example.invalid",
+        )
+        self.db.save_cloud_member_session(
+            member_id="owner-qa",
+            member_token="qa-owner-token",
+            member_role="owner",
+            member_name="QA Owner",
+        )
+        self.assertTrue(self.db.has_persisted_team_session())
+        self.db.clear_cloud_member_session()
+        self.assertFalse(self.db.has_persisted_team_session())
+
     def test_recurring_expense_is_idempotent_after_schedule_update_interruption(self) -> None:
         vendor_id = self.db.save_vendor({"name": "Recurring QA supplier"})
         run_day = date.today().replace(day=1)

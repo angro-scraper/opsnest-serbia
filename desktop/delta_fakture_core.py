@@ -2115,6 +2115,22 @@ class Database:
         )
         self.conn.commit()
 
+    def has_persisted_team_session(self) -> bool:
+        """Return whether this Windows profile has a usable saved team session.
+
+        The member token is protected with DPAPI on Windows, so this is a
+        trusted-device convenience check, not a stored password.  A token
+        revoked by the owner or unavailable under a different Windows profile
+        is cleared by ``cloud_connection`` and therefore fails this check.
+        """
+        connection = self.cloud_connection()
+        return bool(
+            connection.get("api_url")
+            and connection.get("member_id")
+            and connection.get("member_token")
+            and connection.get("member_role")
+        )
+
     def clear_cloud_member_session(self) -> None:
         self.conn.execute(
             """

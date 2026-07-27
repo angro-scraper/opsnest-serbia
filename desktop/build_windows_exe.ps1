@@ -6,7 +6,7 @@ $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $python = "C:\Users\49162\AppData\Local\Programs\Python\Python313\python.exe"
-$version = "2.13.6"
+$version = "2.13.7"
 # Each desktop version has an isolated payload folder.  It avoids modifying a
 # previous release that may still be held by OneDrive or a running installer.
 $release = Join-Path $root "release\$version"
