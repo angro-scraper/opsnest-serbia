@@ -13,9 +13,9 @@ from urllib.parse import urlparse
 
 
 FALLBACK_RELEASE = {
-    "latest_version": "2.13.10",
-    "installer_url": "https://opsnestone.com/downloads/OpsNest-Setup-2.13.10.exe",
-    "installer_sha256": "6983bd3b868eac42b6c89f604f80789e73f3fb4af297ad50bedb466cf1249625",
+    "latest_version": "2.13.11",
+    "installer_url": "https://opsnestone.com/downloads/OpsNest-Setup-2.13.11.exe",
+    "installer_sha256": "53d34857d7b20572bb3e5f20488c5be74e9dba46cd2b84a6e6802811b90057ff",
 }
 _RELEASE_VERSION = re.compile(r"^\d+\.\d+\.\d+$")
 _TRUSTED_DOWNLOAD_HOSTS = {"opsnestone.com", "www.opsnestone.com"}

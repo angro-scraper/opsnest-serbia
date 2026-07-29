@@ -708,14 +708,29 @@ def export_invoice_xlsx(invoice: dict[str, Any], output_path: Path, template_pat
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     updates = build_invoice_xlsx_updates(invoice)
-    # A custom workbook can contain Excel-only relationships that survive a
-    # ZIP/XML edit but make the resulting file impossible for Excel COM to
-    # reopen.  Use Excel itself on Windows so the editable copy and its A4 PDF
-    # are always generated from the exact original template.  This runs in the
-    # background export worker and is therefore safe even for larger files.
-    if sys.platform.startswith("win"):
-        return _export_invoice_xlsx_via_excel(template, output_path, updates)
-    _copy_zip_with_updates(template, output_path, updates)
+    # Raw ZIP/XML edits are fast but can leave a custom Excel workbook in a
+    # state that Excel COM refuses to reopen.  OpenPyXL writes a valid workbook
+    # in-process in a few seconds, avoiding hundreds of slow COM calls before
+    # the user opens an Excel preview.  Excel is still used only for the final
+    # authoritative A4 PDF conversion.
+    try:
+        workbook = load_workbook(template)
+        sheet = workbook.worksheets[0]
+        for cell_ref, value in updates.get("xl/worksheets/sheet1.xml", {}).items():
+            sheet[cell_ref] = value
+        sheet.page_setup.orientation = "portrait"
+        sheet.page_setup.paperSize = sheet.PAPERSIZE_A4
+        sheet.page_setup.fitToWidth = 1
+        sheet.page_setup.fitToHeight = 1
+        sheet.sheet_properties.pageSetUpPr.fitToPage = True
+        sheet.print_area = INVOICE_PRINT_AREA
+        workbook.save(output_path)
+    except Exception:
+        # Preserve the native Excel path for unusual legacy templates that
+        # OpenPyXL cannot load.  It is slower but maintains compatibility.
+        if sys.platform.startswith("win"):
+            return _export_invoice_xlsx_via_excel(template, output_path, updates)
+        _copy_zip_with_updates(template, output_path, updates)
     return output_path
 
 
