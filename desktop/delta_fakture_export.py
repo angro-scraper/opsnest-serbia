@@ -194,6 +194,16 @@ def _translated_standard_description(value: Any, language: str, invoice_kind: An
         if normalized == prefix or normalized.startswith(prefix + " "):
             suffix = source[len(prefix):].strip()
             label = {"sr": "Avans", "bg": "Аванс", "en": "Advance payment"}.get(language, "Avans")
+            suffix_prefixes = {
+                "sr": (("po ugovoru", "po ugovoru"),),
+                "bg": (("po ugovoru", "по договор"), ("prema ugovoru", "съгласно договор")),
+                "en": (("po ugovoru", "under contract"), ("prema ugovoru", "under contract")),
+            }
+            for original, localized in suffix_prefixes.get(language, ()):
+                position = suffix.casefold().find(original)
+                if position >= 0:
+                    suffix = suffix[:position] + localized + suffix[position + len(original):]
+                    break
             return f"{label}{(' ' + suffix) if suffix else ''}"
     if str(invoice_kind or "").strip().lower() == "advance" and not source:
         return {"sr": "Avans", "bg": "Аванс", "en": "Advance payment"}.get(language, "Avans")
@@ -617,6 +627,8 @@ try {{
     $excel = New-Object -ComObject Excel.Application
     $excel.Visible = $false
     $excel.DisplayAlerts = $false
+    $excel.ScreenUpdating = $false
+    $excel.EnableEvents = $false
     $book = $excel.Workbooks.Open($outputPath)
     $sheet = $book.Worksheets.Item(1)
     # Every invoice is a single A4 portrait document.  Do this on every saved
@@ -662,12 +674,15 @@ try {{
             check=False,
             capture_output=True,
             text=True,
-            timeout=60,
+            # A protected customer template can take longer than one minute on
+            # a busy workstation.  This task runs in the export worker, so a
+            # generous limit never freezes the invoice editor.
+            timeout=180,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise RuntimeError(
-            "OpsNest nije uspeo da pokrene Windows PowerShell za Excel pregled. "
-            "Proverite da li su Windows PowerShell i Microsoft Excel dostupni."
+            "Excel šablon nije završio pripremu u predviđenom vremenu. "
+            "Sačekajte da se zatvore eventualno otvoreni Excel prozori i pokušajte ponovo."
         ) from exc
     if result.returncode != 0 or not output_path.exists() or output_path.stat().st_size == 0:
         details = "\n".join(part for part in [result.stdout.strip(), result.stderr.strip()] if part)
@@ -682,8 +697,10 @@ def export_invoice_xlsx(invoice: dict[str, Any], output_path: Path, template_pat
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     updates = build_invoice_xlsx_updates(invoice)
-    if sys.platform.startswith("win"):
-        return _export_invoice_xlsx_via_excel(template, output_path, updates)
+    # Writing the protected template through Excel cell-by-cell can take several
+    # minutes on some Windows machines.  Updating only worksheet XML preserves
+    # formulas/styles and keeps the editable Excel copy ready in seconds. Excel
+    # is still used afterwards for the authoritative A4 PDF rendering.
     _copy_zip_with_updates(template, output_path, updates)
     return output_path
 

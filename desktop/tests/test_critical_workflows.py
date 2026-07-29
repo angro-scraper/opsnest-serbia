@@ -551,7 +551,7 @@ class CriticalWorkflowTests(unittest.TestCase):
                 "items": [
                     {
                         "category": "Ugovorni avans",
-                        "description": "Avans 20%",
+                        "description": "Avans 20% po ugovoru QA-1",
                         "unit": "kom.",
                         "quantity": 1,
                         "unit_price": 100,
@@ -565,8 +565,15 @@ class CriticalWorkflowTests(unittest.TestCase):
         )["xl/worksheets/sheet1.xml"]
         self.assertEqual(updates["I8"], "Банков превод")
         self.assertEqual(updates["B25"], "Договорен аванс")
-        self.assertEqual(updates["C25"], "Аванс 20%")
+        self.assertEqual(updates["C25"], "Аванс 20% по договор QA-1")
         self.assertEqual(updates["D25"], "бр.")
+
+    def test_bulgarian_invoice_editor_commands_have_stable_display_labels(self) -> None:
+        from delta_fakture_app import canonical_ui_text, tr
+
+        self.assertEqual(tr("Avansni račun", "bg"), "Авансова фактура")
+        self.assertEqual(tr("Forma fakture", "bg"), "Формуляр на фактура")
+        self.assertEqual(canonical_ui_text("Авансова фактура", "bg"), "Avansni račun")
 
     def test_credit_note_uses_source_invoice_document_language(self) -> None:
         """Follow-up tax documents remain in the language of the original invoice."""

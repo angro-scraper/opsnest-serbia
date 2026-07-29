@@ -6,7 +6,7 @@ $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $python = "C:\Users\49162\AppData\Local\Programs\Python\Python313\python.exe"
-$version = "2.13.8"
+$version = "2.13.9"
 $release = Join-Path $root "release"
 
 if (-not (Test-Path $python)) {

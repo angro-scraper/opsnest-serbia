@@ -1384,6 +1384,26 @@ FINANCE_UI_TRANSLATIONS = {
 }
 for _finance_language, _finance_labels in FINANCE_UI_TRANSLATIONS.items():
     UI_TRANSLATIONS.setdefault(_finance_language, {}).update(_finance_labels)
+
+# The invoice editor is the most frequently used accounting screen.  Keep its
+# workflow selectors and template actions in the normal UI dictionary too.
+INVOICE_EDITOR_UI_TRANSLATIONS = {
+    "bg": {
+        "Forma fakture": "Формуляр на фактура", "Upravljaj obrascima": "Управление на формуляри", "Otvori obrazac": "Отвори формуляра",
+        "Originalni Delta obrazac je zaštićen; sopstveni obrazac se čuva kao posebna kopija.": "Оригиналният формуляр е защитен; вашият формуляр се съхранява като отделно копие.",
+        "Vrsta računa": "Вид фактура", "Plaćeni avans": "Платен аванс", "Jezik dokumenta za izvoz": "Език на документа за износ",
+        "Menja fiksne oznake na Excel/PDF fakturi; opisi stavki ostaju tačno kako su uneti.": "Превежда всички системни означения в Excel/PDF фактурата; въведените от вас свободни описания остават непроменени.",
+        "Standardni račun": "Стандартна фактура", "Avansni račun": "Авансова фактура", "Završni račun": "Окончателна фактура",
+        "Nacrt": "Чернова", "Na proveri": "За преглед", "Odobrena": "Одобрена", "Broj će biti dodeljen pri čuvanju": "Номерът ще бъде присвоен при записване",
+        "Avans": "Аванс", "plaćeno": "платено", "Ugovorni avans": "Договорен аванс",
+        "Avans se računa iz ugovora projekta; za završni račun izaberite plaćeni avans u kartici Detalji.": "Авансът се изчислява от договора на проекта; за окончателната фактура изберете платения аванс в раздел Детайли.",
+        "Izaberite projekat sa vrednošću ugovora bez PDV-a i procentom avansa.": "Изберете проект със стойност на договора без ДДС и процент аванс.",
+        "Ugovor bez PDV-a": "Договор без ДДС", "Avans bez PDV-a": "Аванс без ДДС", "OpsNest automatski pravi ugovornu avansnu stavku pri pregledu i čuvanju.": "OpsNest автоматично създава договорна авансова позиция при преглед и записване.",
+        "Avans se obračunava iz ugovora projekta i ne unosi se kroz stavke rada, materijala ili ostalo.": "Авансът се изчислява от договора на проекта и не се въвежда като труд, материали или други позиции.",
+    },
+}
+for _invoice_editor_language, _invoice_editor_labels in INVOICE_EDITOR_UI_TRANSLATIONS.items():
+    UI_TRANSLATIONS.setdefault(_invoice_editor_language, {}).update(_invoice_editor_labels)
 _active_ui_language = "sr"
 CLIPBOARD_HEADER_ALIASES = {
     "category": ("kategorija", "category", "tip", "vrsta", "vid", "vid smr", "vid radova"),
@@ -1473,7 +1493,7 @@ OPSNEST_WEBSITE_URL = "https://opsnestone.com"
 OPSNEST_CLOUD_API_URL = "https://api.opsnestone.com"
 OPSNEST_PRICING_URL = f"{OPSNEST_WEBSITE_URL}/pricing"
 OPSNEST_PAYPAL_CANCELLATION_URL = "https://www.paypal.com/myaccount/autopay/"
-OPSNEST_APP_VERSION = "2.13.8"
+OPSNEST_APP_VERSION = "2.13.9"
 
 
 def normalize_ui_language(value: Any) -> str:
@@ -1729,6 +1749,20 @@ def localize_widget_tree(root: tk.Misc, language: str | None = None) -> None:
                 sources[column] = source
                 widget.heading(column, text=tr(source, code))
             setattr(widget, "_opsnest_heading_sources", sources)
+
+        if isinstance(widget, ttk.Combobox):
+            # Values inside workflow selectors are visible commands too. Keep
+            # the original Serbian values once, then translate the display on
+            # every language refresh without changing the stored business code.
+            source_values = getattr(widget, "_opsnest_value_sources", None)
+            if source_values is None:
+                source_values = tuple(canonical_ui_text(str(value), code) for value in widget.cget("values"))
+                setattr(widget, "_opsnest_value_sources", source_values)
+            widget.configure(values=tuple(tr(value, code) for value in source_values))
+            current = str(widget.get() or "")
+            source_current = canonical_ui_text(current, code)
+            if source_current in source_values:
+                widget.set(tr(source_current, code))
 
         for child in widget.winfo_children():
             localize_widget(child)
@@ -12755,6 +12789,9 @@ class InvoiceEditor(tk.Toplevel):
             self._on_invoice_kind_changed()
             self._apply_customer_terms()
             self._refresh_totals()
+        # Database stores a stable code; the selector must show a localized
+        # workflow caption rather than the raw internal value "draft".
+        self.vars["status_code"].set(localized_status_label(status_code_from_display(self.vars["status_code"].get()) or "draft"))
         localize_widget_tree(self, self.app.ui_language)
         self.after_idle(self._maximize_window)
 
@@ -13460,7 +13497,7 @@ class InvoiceEditor(tk.Toplevel):
             return []
 
     def _selected_invoice_kind(self) -> str:
-        selected = self.vars["invoice_kind"].get().strip()
+        selected = canonical_ui_text(self.vars["invoice_kind"].get().strip(), active_ui_language())
         for code, label in INVOICE_KIND_LABELS.items():
             if selected == label:
                 return code
@@ -13496,8 +13533,8 @@ class InvoiceEditor(tk.Toplevel):
         values: list[str] = []
         for row in rows:
             display = (
-                f"{row.get('invoice_number') or 'Avans'} | "
-                f"plaćeno {fmt_money(row.get('paid_total') or 0, row.get('currency') or DEFAULT_CURRENCY)} | "
+                f"{row.get('invoice_number') or tr('Avans')} | "
+                f"{tr('plaćeno')} {fmt_money(row.get('paid_total') or 0, row.get('currency') or DEFAULT_CURRENCY)} | "
                 f"{display_date(row.get('issue_date'))}"
             )
             values.append(display)
@@ -13525,16 +13562,16 @@ class InvoiceEditor(tk.Toplevel):
             return
         if is_advance:
             project_id = self._selected_project_id()
-            notice = "Izaberite projekat sa vrednošću ugovora bez PDV-a i procentom avansa."
+            notice = tr("Izaberite projekat sa vrednošću ugovora bez PDV-a i procentom avansa.")
             if project_id:
                 try:
                     terms = self.db.project_advance_terms(project_id)
                     currency = self.vars["currency"].get() or DEFAULT_CURRENCY
                     notice = (
-                        f"Ugovor bez PDV-a: {fmt_money(terms['contract_net_amount'], currency)} | "
-                        f"Avans: {terms['advance_percent']:g}% | "
-                        f"Avans bez PDV-a: {fmt_money(terms['advance_net_amount'], currency)}. "
-                        "OpsNest automatski pravi ugovornu avansnu stavku pri pregledu i čuvanju."
+                        f"{tr('Ugovor bez PDV-a')}: {fmt_money(terms['contract_net_amount'], currency)} | "
+                        f"{tr('Avans')}: {terms['advance_percent']:g}% | "
+                        f"{tr('Avans bez PDV-a')}: {fmt_money(terms['advance_net_amount'], currency)}. "
+                        f"{tr('OpsNest automatski pravi ugovornu avansnu stavku pri pregledu i čuvanju.')}"
                     )
                 except ValueError as exc:
                     notice = str(exc)
@@ -13551,8 +13588,8 @@ class InvoiceEditor(tk.Toplevel):
         if self._selected_invoice_kind() != "advance":
             return True
         messagebox.showinfo(
-            "Ugovorni avans",
-            "Avans se obračunava iz ugovora projekta i ne unosi se kroz stavke rada, materijala ili ostalo.",
+            tr("Ugovorni avans"),
+            tr("Avans se obračunava iz ugovora projekta i ne unosi se kroz stavke rada, materijala ili ostalo."),
             parent=self,
         )
         return False
