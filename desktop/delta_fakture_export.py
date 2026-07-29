@@ -125,14 +125,104 @@ def invoice_document_text(invoice: dict[str, Any]) -> dict[str, str]:
 
 def _translated_category(value: Any, language: str) -> str:
     source = str(value or "").strip()
-    categories = {
-        "Труд": {"sr": "Rad", "bg": "Труд", "en": "Labour"},
-        "Материали": {"sr": "Materijal", "bg": "Материали", "en": "Materials"},
-        "Механизация": {"sr": "Mehanizacija", "bg": "Механизация", "en": "Machinery"},
-        "Транспорт": {"sr": "Transport", "bg": "Транспорт", "en": "Transport"},
-        "Други": {"sr": "Ostalo", "bg": "Други", "en": "Other"},
+    normalized = source.casefold().strip(" .")
+    canonical = {
+        "rad": "labour", "labor": "labour", "labour": "labour", "труд": "labour",
+        "materijal": "materials", "materijali": "materials", "materials": "materials", "материали": "materials",
+        "mehanizacija": "machinery", "machinery": "machinery", "механизация": "machinery",
+        "transport": "transport", "транспорт": "transport",
+        "ostalo": "other", "drugi": "other", "other": "other", "други": "other",
+        "ugovorni avans": "advance", "avans": "advance", "advance": "advance", "аванc": "advance", "аванс": "advance",
+    }.get(normalized)
+    translated = {
+        "labour": {"sr": "Rad", "bg": "Труд", "en": "Labour"},
+        "materials": {"sr": "Materijal", "bg": "Материали", "en": "Materials"},
+        "machinery": {"sr": "Mehanizacija", "bg": "Механизация", "en": "Machinery"},
+        "transport": {"sr": "Transport", "bg": "Транспорт", "en": "Transport"},
+        "other": {"sr": "Ostalo", "bg": "Други", "en": "Other"},
+        "advance": {"sr": "Ugovorni avans", "bg": "Договорен аванс", "en": "Contract advance"},
     }
-    return categories.get(source, {}).get(language, source)
+    return translated.get(canonical or "", {}).get(language, source)
+
+
+def _translated_unit(value: Any, language: str) -> str:
+    """Translate only standardized units, never a free-form unit supplied by a user."""
+    source = str(value or "").strip()
+    canonical = {
+        "kom": "piece", "kom.": "piece", "pcs": "piece", "pc": "piece", "бр": "piece", "бр.": "piece",
+        "usl": "service", "usl.": "service", "usluga": "service", "service": "service", "усл": "service", "усл.": "service",
+        "sat": "hour", "h": "hour", "hour": "hour", "час": "hour", "ч": "hour",
+        "dan": "day", "day": "day", "ден": "day",
+    }.get(source.casefold())
+    translated = {
+        "piece": {"sr": "kom.", "bg": "бр.", "en": "pcs"},
+        "service": {"sr": "usl.", "bg": "усл.", "en": "service"},
+        "hour": {"sr": "sat", "bg": "час", "en": "hour"},
+        "day": {"sr": "dan", "bg": "ден", "en": "day"},
+    }
+    return translated.get(canonical or "", {}).get(language, source)
+
+
+def _translated_payment_method(value: Any, language: str) -> str:
+    """Keep a selected payment method readable in the document language."""
+    source = str(value or "").strip()
+    canonical = {
+        "banka": "bank", "bankarski transfer": "bank", "bank transfer": "bank", "банков превод": "bank",
+        "gotovina": "cash", "kasa": "cash", "cash": "cash", "в брой": "cash",
+        "kartica": "card", "card": "card", "карта": "card",
+        "kompenzacija": "offset", "offset": "offset", "прихващане": "offset",
+    }.get(source.casefold())
+    translated = {
+        "bank": {"sr": "Banka", "bg": "Банков превод", "en": "Bank transfer"},
+        "cash": {"sr": "Gotovina", "bg": "В брой", "en": "Cash"},
+        "card": {"sr": "Kartica", "bg": "Карта", "en": "Card"},
+        "offset": {"sr": "Kompenzacija", "bg": "Прихващане", "en": "Set-off"},
+    }
+    return translated.get(canonical or "", {}).get(language, source)
+
+
+def _translated_standard_description(value: Any, language: str, invoice_kind: Any = "") -> str:
+    """Translate OpsNest's own financial terms while preserving custom legal wording.
+
+    For example, the automatically created ``Avans 20%`` is a system term,
+    unlike an item description the accountant typed manually.
+    """
+    source = str(value or "").strip()
+    normalized = source.casefold()
+    advance_prefixes = ("avans", "ugovorni avans", "advance", "договорен аванс", "аванс")
+    for prefix in advance_prefixes:
+        if normalized == prefix or normalized.startswith(prefix + " "):
+            suffix = source[len(prefix):].strip()
+            label = {"sr": "Avans", "bg": "Аванс", "en": "Advance payment"}.get(language, "Avans")
+            return f"{label}{(' ' + suffix) if suffix else ''}"
+    if str(invoice_kind or "").strip().lower() == "advance" and not source:
+        return {"sr": "Avans", "bg": "Аванс", "en": "Advance payment"}.get(language, "Avans")
+    return source
+
+
+def _credit_note_document_language(note: dict[str, Any]) -> str:
+    source = _credit_note_source(note)
+    language = str(source.get("document_language") or note.get("document_language") or "").strip().lower()
+    if language in INVOICE_DOCUMENT_TEXT:
+        return language
+    company = note.get("company") if isinstance(note.get("company"), dict) else {}
+    return "bg" if str(company.get("country_code") or "").upper() == "BG" else "sr"
+
+
+def _credit_note_text(note: dict[str, Any]) -> dict[str, str]:
+    language = _credit_note_document_language(note)
+    labels = {
+        "sr": {
+            "title": "KREDITNO ODOBRENJE", "subtitle": "Formalni dokument uz izdatu fakturu", "number": "BROJ ODOBRENJA", "issue_date": "DATUM IZDAVANJA", "source_invoice": "IZVORNA FAKTURA", "source_date": "DATUM FAKTURE", "project": "PROJEKAT", "currency": "VALUTA", "supplier": "IZDAVALAC", "customer": "PRIMALAC", "reason": "OSNOV KOREKCIJE", "net": "Osnovica bez PDV-a", "vat": "PDV", "total": "Ukupno odobrenje", "linked_invoice": "Povezana faktura", "archive_note": "Dokument je vezan za izvornu fakturu i evidentirani povraćaj. Sačuvati zajedno sa poreskom evidencijom projekta.",
+        },
+        "bg": {
+            "title": "КРЕДИТНО ИЗВЕСТИЕ", "subtitle": "Официален документ към издадена фактура", "number": "НОМЕР НА КРЕДИТНОТО ИЗВЕСТИЕ", "issue_date": "ДАТА НА ИЗДАВАНЕ", "source_invoice": "ОРИГИНАЛНА ФАКТУРА", "source_date": "ДАТА НА ФАКТУРАТА", "project": "ОБЕКТ / ПРОЕКТ", "currency": "ВАЛУТА", "supplier": "ДОСТАВЧИК", "customer": "ПОЛУЧАТЕЛ", "reason": "ОСНОВАНИЕ ЗА КОРЕКЦИЯ", "net": "Данъчна основа", "vat": "ДДС", "total": "Общо кредитно известие", "linked_invoice": "Свързана фактура", "archive_note": "Документът е свързан с оригиналната фактура и регистрираното възстановяване. Съхранявайте го заедно с данъчната документация на проекта.",
+        },
+        "en": {
+            "title": "CREDIT NOTE", "subtitle": "Formal document linked to an issued invoice", "number": "CREDIT NOTE NUMBER", "issue_date": "ISSUE DATE", "source_invoice": "ORIGINAL INVOICE", "source_date": "INVOICE DATE", "project": "PROJECT", "currency": "CURRENCY", "supplier": "SUPPLIER", "customer": "CUSTOMER", "reason": "REASON FOR CORRECTION", "net": "Net amount", "vat": "VAT", "total": "Credit note total", "linked_invoice": "Linked invoice", "archive_note": "This document is linked to the original invoice and the recorded refund. Keep it with the project's tax records.",
+        },
+    }
+    return labels[language]
 
 # Reports follow the application language by default, but the caller can set
 # report_language on a report payload to prepare a package for another reader.
@@ -383,6 +473,7 @@ def build_invoice_xlsx_updates(invoice: dict[str, Any]) -> dict[str, dict[str, A
     company = invoice.get("company", {})
     display = _company_display(company)
     text = invoice_document_text(invoice)
+    language = invoice_document_language(invoice)
     customer_phone = _short_text(invoice.get("customer_phone", ""))
     customer_email = _short_text(invoice.get("customer_email", ""))
     customer_phone_email = " • ".join([part for part in [customer_phone, customer_email] if part]) or ""
@@ -412,7 +503,7 @@ def build_invoice_xlsx_updates(invoice: dict[str, Any]) -> dict[str, dict[str, A
             "A8": format_date(issue_date),
             "D8": format_date(tax_event_date),
             "G8": format_date(due_date),
-            "I8": _short_text(invoice.get("payment_method", "")),
+            "I8": _short_text(_translated_payment_method(invoice.get("payment_method", ""), language)),
             "A11": _short_text(invoice.get("project_name", "")),
             "D11": _short_text(invoice.get("site_address", "")),
             "G11": _short_text(invoice.get("contract_no", "")),
@@ -481,9 +572,9 @@ def build_invoice_xlsx_updates(invoice: dict[str, Any]) -> dict[str, dict[str, A
             item = items[idx]
             line = {
                 "A": idx + 1,
-                "B": _short_text(_translated_category(item.get("category", ""), invoice_document_language(invoice))),
-                "C": _short_text(item.get("description", ""), 90),
-                "D": _short_text(item.get("unit", "")),
+                "B": _short_text(_translated_category(item.get("category", ""), language)),
+                "C": _short_text(_translated_standard_description(item.get("description", ""), language, invoice.get("invoice_kind")), 90),
+                "D": _short_text(_translated_unit(item.get("unit", ""), language)),
                 "E": _number_value(item.get("quantity")),
                 "F": _number_value(item.get("unit_price")),
                 "G": _number_value(item.get("discount_percent")) / 100.0 if _number_value(item.get("discount_percent")) > 1 else _number_value(item.get("discount_percent")),
@@ -1179,9 +1270,10 @@ def export_credit_note_xlsx(note: dict[str, Any], output_path: Path) -> Path:
     """Create a standalone Excel copy for a formal credit note, never touching the invoice template."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    text = _credit_note_text(note)
     workbook = Workbook()
     sheet = workbook.active
-    sheet.title = "Odobrenje"
+    sheet.title = text["title"][:31]
     sheet.sheet_view.showGridLines = False
     sheet.page_setup.orientation = "portrait"
     sheet.page_setup.paperSize = sheet.PAPERSIZE_A4
@@ -1209,22 +1301,22 @@ def export_credit_note_xlsx(note: dict[str, Any], output_path: Path) -> Path:
     value_font = Font(name="Arial", size=10, color="1F2937")
 
     sheet.merge_cells("A1:D1")
-    sheet["A1"] = "KREDITNO IZVESTIJE / ODOBRENJE"
+    sheet["A1"] = text["title"]
     sheet["A1"].fill = title_fill
     sheet["A1"].font = title_font
     sheet["A1"].alignment = Alignment(horizontal="center", vertical="center")
     sheet.row_dimensions[1].height = 31
     sheet.merge_cells("A2:D2")
-    sheet["A2"] = "Formalni dokument uz izdatu fakturu"
+    sheet["A2"] = text["subtitle"]
     sheet["A2"].font = Font(name="Arial", size=10, italic=True, color="6A7A72")
     sheet["A2"].alignment = Alignment(horizontal="center")
 
     source = _credit_note_source(note)
     company = note.get("company") if isinstance(note.get("company"), dict) else {}
     rows = [
-        ("Broj odobrenja", note.get("credit_note_number") or "", "Datum izdavanja", format_date(note.get("issue_date"))),
-        ("Izvorna faktura", source.get("invoice_number") or note.get("source_invoice_number") or "", "Datum fakture", format_date(source.get("issue_date"))),
-        ("Projekat", note.get("project_name") or source.get("project_name") or "", "Valuta", note.get("currency") or "EUR"),
+        (text["number"], note.get("credit_note_number") or "", text["issue_date"], format_date(note.get("issue_date"))),
+        (text["source_invoice"], source.get("invoice_number") or note.get("source_invoice_number") or "", text["source_date"], format_date(source.get("issue_date"))),
+        (text["project"], note.get("project_name") or source.get("project_name") or "", text["currency"], note.get("currency") or "EUR"),
     ]
     for row_no, values in enumerate(rows, start=4):
         for col_no, value in enumerate(values, start=1):
@@ -1236,8 +1328,8 @@ def export_credit_note_xlsx(note: dict[str, Any], output_path: Path) -> Path:
         sheet.row_dimensions[row_no].height = 24
 
     for title, start_col, values in [
-        ("IZDAVALAC", 1, [company.get("name", ""), company.get("eik", ""), company.get("vat_number", ""), company.get("address", "")]),
-        ("PRIMALAC", 3, [source.get("customer_name", note.get("customer_name", "")), source.get("customer_eik", ""), source.get("customer_vat", ""), source.get("customer_address", "")]),
+        (text["supplier"], 1, [company.get("name", ""), company.get("eik", ""), company.get("vat_number", ""), company.get("address", "")]),
+        (text["customer"], 3, [source.get("customer_name", note.get("customer_name", "")), source.get("customer_eik", ""), source.get("customer_vat", ""), source.get("customer_address", "")]),
     ]:
         sheet.merge_cells(start_row=8, start_column=start_col, end_row=8, end_column=start_col + 1)
         header = sheet.cell(row=8, column=start_col, value=title)
@@ -1257,7 +1349,7 @@ def export_credit_note_xlsx(note: dict[str, Any], output_path: Path) -> Path:
             sheet.row_dimensions[offset].height = 22
 
     sheet.merge_cells("A14:D14")
-    sheet["A14"] = "OSNOV KOREKCIJE"
+    sheet["A14"] = text["reason"]
     sheet["A14"].fill = header_fill
     sheet["A14"].font = header_font
     sheet["A14"].alignment = Alignment(horizontal="center")
@@ -1274,7 +1366,7 @@ def export_credit_note_xlsx(note: dict[str, Any], output_path: Path) -> Path:
     sheet.row_dimensions[15].height = 28
     sheet.row_dimensions[16].height = 28
 
-    for col, label in enumerate(("Osnovica bez PDV-a", "PDV", "Ukupno odobrenje", "Povezana faktura"), start=1):
+    for col, label in enumerate((text["net"], text["vat"], text["total"], text["linked_invoice"]), start=1):
         cell = sheet.cell(row=18, column=col, value=label)
         cell.fill = header_fill
         cell.font = header_font
@@ -1296,7 +1388,7 @@ def export_credit_note_xlsx(note: dict[str, Any], output_path: Path) -> Path:
             cell.number_format = '#,##0.00 "EUR"'
     sheet.row_dimensions[19].height = 26
     sheet.merge_cells("A22:D22")
-    sheet["A22"] = "Dokument je vezan za izvornu fakturu i evidentirani povraćaj. Sačuvati zajedno sa poreskom evidencijom projekta."
+    sheet["A22"] = text["archive_note"]
     sheet["A22"].font = Font(name="Arial", size=9, italic=True, color="6A7A72")
     sheet["A22"].alignment = Alignment(wrap_text=True)
     sheet.print_area = "A1:D22"
@@ -1310,9 +1402,11 @@ def export_credit_note_pdf(note: dict[str, Any], output_path: Path, logo_path: P
     output_path.parent.mkdir(parents=True, exist_ok=True)
     source = _credit_note_source(note)
     company = note.get("company") if isinstance(note.get("company"), dict) else {}
+    text = _credit_note_text(note)
+    party_labels = INVOICE_DOCUMENT_TEXT[_credit_note_document_language(note)]
     regular, bold = _pdf_font()
     c = canvas.Canvas(str(output_path), pagesize=A4)
-    c.setTitle(str(note.get("credit_note_number") or "Odobrenje"))
+    c.setTitle(str(note.get("credit_note_number") or text["title"]))
     c.setFillColor(GREEN_DARK)
     c.rect(0, PAGE_H - 29 * mm, PAGE_W, 29 * mm, stroke=0, fill=1)
     logo = logo_path if logo_path and logo_path.exists() else (LOGO_FILE if LOGO_FILE.exists() else None)
@@ -1324,18 +1418,18 @@ def export_credit_note_pdf(note: dict[str, Any], output_path: Path, logo_path: P
             pass
     c.setFillColor(colors.white)
     c.setFont(bold, 18)
-    c.drawRightString(PAGE_W - MARGIN_X, PAGE_H - 12 * mm, "KREDITNO IZVESTIJE / ODOBRENJE")
+    c.drawRightString(PAGE_W - MARGIN_X, PAGE_H - 12 * mm, text["title"])
     c.setFont(regular, 8.5)
-    c.drawRightString(PAGE_W - MARGIN_X, PAGE_H - 18 * mm, "Formalni dokument uz izdatu fakturu")
+    c.drawRightString(PAGE_W - MARGIN_X, PAGE_H - 18 * mm, text["subtitle"])
 
     y = PAGE_H - 42 * mm
     metadata = [
-        ("BROJ ODOBRENJA", note.get("credit_note_number") or "-"),
-        ("DATUM IZDAVANJA", format_date(note.get("issue_date")) or "-"),
-        ("IZVORNA FAKTURA", source.get("invoice_number") or note.get("source_invoice_number") or "-"),
-        ("DATUM FAKTURE", format_date(source.get("issue_date")) or "-"),
-        ("PROJEKAT", note.get("project_name") or source.get("project_name") or "-"),
-        ("VALUTA", note.get("currency") or "EUR"),
+        (text["number"], note.get("credit_note_number") or "-"),
+        (text["issue_date"], format_date(note.get("issue_date")) or "-"),
+        (text["source_invoice"], source.get("invoice_number") or note.get("source_invoice_number") or "-"),
+        (text["source_date"], format_date(source.get("issue_date")) or "-"),
+        (text["project"], note.get("project_name") or source.get("project_name") or "-"),
+        (text["currency"], note.get("currency") or "EUR"),
     ]
     cell_w = CONTENT_W / 3
     for index, (label, value) in enumerate(metadata):
@@ -1356,20 +1450,20 @@ def export_credit_note_pdf(note: dict[str, Any], output_path: Path, logo_path: P
     y -= 48 * mm
     block_w = (CONTENT_W - 8 * mm) / 2
     _draw_block(
-        c, MARGIN_X, y, block_w, "IZDAVALAC",
-        ["Firma", "EIK / BULSTAT", "PDV broj", "Adresa"],
+        c, MARGIN_X, y, block_w, text["supplier"],
+        [party_labels["company"], party_labels["eik"], party_labels["vat_no"], party_labels["address"]],
         [company.get("name", ""), company.get("eik", ""), company.get("vat_number", ""), company.get("address", "")],
     )
     _draw_block(
-        c, MARGIN_X + block_w + 8 * mm, y, block_w, "PRIMALAC",
-        ["Firma", "EIK / BULSTAT", "PDV broj", "Adresa"],
+        c, MARGIN_X + block_w + 8 * mm, y, block_w, text["customer"],
+        [party_labels["company"], party_labels["eik"], party_labels["vat_no"], party_labels["address"]],
         [source.get("customer_name", note.get("customer_name", "")), source.get("customer_eik", ""), source.get("customer_vat", ""), source.get("customer_address", "")],
     )
 
     y -= 90
     c.setFillColor(GREEN_DARK)
     c.setFont(bold, 9)
-    c.drawString(MARGIN_X, y, "OSNOV KOREKCIJE")
+    c.drawString(MARGIN_X, y, text["reason"])
     y -= 4 * mm
     c.setStrokeColor(GREEN_LINE)
     c.setFillColor(GREEN_LIGHTER)
@@ -1378,7 +1472,7 @@ def export_credit_note_pdf(note: dict[str, Any], output_path: Path, logo_path: P
 
     table_y = y - 48 * mm
     table_data = [
-        ["Osnovica bez PDV-a", "PDV", "Ukupno odobrenje"],
+        [text["net"], text["vat"], text["total"]],
         [
             format_currency(note.get("net_amount") or 0, note.get("currency") or "EUR"),
             format_currency(note.get("vat_amount") or 0, note.get("currency") or "EUR"),

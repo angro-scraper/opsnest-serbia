@@ -538,6 +538,60 @@ class CriticalWorkflowTests(unittest.TestCase):
         self.assertIn(b"Example Contractor", sheet_xml)
         self.assertNotIn(b"Delta Hochbau", all_xml)
 
+    def test_bulgarian_document_language_translates_system_advance_terms(self) -> None:
+        """A Serbian-entered contractual advance must issue with Bulgarian system terms."""
+        from delta_fakture_export import build_invoice_xlsx_updates
+
+        updates = build_invoice_xlsx_updates(
+            {
+                "company": {"country_code": "BG"},
+                "document_language": "bg",
+                "invoice_kind": "advance",
+                "payment_method": "Banka",
+                "items": [
+                    {
+                        "category": "Ugovorni avans",
+                        "description": "Avans 20%",
+                        "unit": "kom.",
+                        "quantity": 1,
+                        "unit_price": 100,
+                        "discount_percent": 0,
+                        "net_amount": 100,
+                        "vat_amount": 20,
+                        "gross_amount": 120,
+                    }
+                ],
+            }
+        )["xl/worksheets/sheet1.xml"]
+        self.assertEqual(updates["I8"], "Банков превод")
+        self.assertEqual(updates["B25"], "Договорен аванс")
+        self.assertEqual(updates["C25"], "Аванс 20%")
+        self.assertEqual(updates["D25"], "бр.")
+
+    def test_credit_note_uses_source_invoice_document_language(self) -> None:
+        """Follow-up tax documents remain in the language of the original invoice."""
+        from openpyxl import load_workbook
+        from delta_fakture_export import export_credit_note_xlsx
+
+        output = Path(self.temp_dir.name) / "credit-note-bg.xlsx"
+        export_credit_note_xlsx(
+            {
+                "credit_note_number": "CN-1",
+                "issue_date": date.today().isoformat(),
+                "currency": "EUR",
+                "net_amount": 100,
+                "vat_amount": 20,
+                "gross_amount": 120,
+                "company": {"country_code": "BG", "name": "QA Supplier"},
+                "source_invoice": {"document_language": "bg", "invoice_number": "1000000001"},
+            },
+            output,
+        )
+        sheet = load_workbook(output).active
+        self.assertEqual(sheet["A1"].value, "КРЕДИТНО ИЗВЕСТИЕ")
+        self.assertEqual(sheet["A4"].value, "НОМЕР НА КРЕДИТНОТО ИЗВЕСТИЕ")
+        self.assertEqual(sheet["A18"].value, "Данъчна основа")
+
     def test_cloud_client_waits_for_safe_cold_start(self) -> None:
         """A free-tier wake-up must not become a false service-unavailable error."""
         from opsnest_cloud_client import CLOUD_REQUEST_TIMEOUT_SECONDS, OpsNestCloudClient

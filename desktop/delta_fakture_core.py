@@ -4857,7 +4857,7 @@ class Database:
                     "id", "invoice_number", "issue_date", "tax_event_date", "customer_name", "customer_eik",
                     "customer_vat", "customer_address", "customer_contact", "customer_phone", "customer_email",
                     "project_name", "site_address", "contract_no", "protocol_no", "issue_place", "currency",
-                    "tax_base", "vat_total", "gross_total", "vat_rate",
+                    "tax_base", "vat_total", "gross_total", "vat_rate", "document_language",
                 )
             },
         }
