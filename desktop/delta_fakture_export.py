@@ -56,6 +56,17 @@ def _powershell_executable() -> str:
     return str(candidate) if candidate.is_file() else "powershell.exe"
 
 
+def _powershell_literal(value: Path | str) -> str:
+    """Return one safe PowerShell string literal without JSON path escaping.
+
+    ``json.dumps`` is correct for JavaScript but not for a PowerShell source
+    string: a Windows path such as ``C:\\Temp`` becomes ``C:\\\\Temp`` and
+    Excel COM can refuse to open it.  PowerShell escapes a single quote by
+    doubling it, while backslashes must remain untouched.
+    """
+    return "'" + str(value).replace("'", "''") + "'"
+
+
 PAGE_W, PAGE_H = A4
 MARGIN_X = 14 * mm
 MARGIN_TOP = 12 * mm
@@ -614,8 +625,8 @@ def _export_invoice_xlsx_via_excel(template_path: Path, output_path: Path, updat
     output_path.parent.mkdir(parents=True, exist_ok=True)
     script = f"""
 $ErrorActionPreference = 'Stop'
-$templatePath = {json.dumps(str(template_path))}
-$outputPath = {json.dumps(str(output_path))}
+$templatePath = {_powershell_literal(template_path)}
+$outputPath = {_powershell_literal(output_path)}
 $encodedUpdates = {json.dumps(encoded_updates)}
 $excel = $null
 $book = $null
@@ -697,10 +708,13 @@ def export_invoice_xlsx(invoice: dict[str, Any], output_path: Path, template_pat
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     updates = build_invoice_xlsx_updates(invoice)
-    # Writing the protected template through Excel cell-by-cell can take several
-    # minutes on some Windows machines.  Updating only worksheet XML preserves
-    # formulas/styles and keeps the editable Excel copy ready in seconds. Excel
-    # is still used afterwards for the authoritative A4 PDF rendering.
+    # A custom workbook can contain Excel-only relationships that survive a
+    # ZIP/XML edit but make the resulting file impossible for Excel COM to
+    # reopen.  Use Excel itself on Windows so the editable copy and its A4 PDF
+    # are always generated from the exact original template.  This runs in the
+    # background export worker and is therefore safe even for larger files.
+    if sys.platform.startswith("win"):
+        return _export_invoice_xlsx_via_excel(template, output_path, updates)
     _copy_zip_with_updates(template, output_path, updates)
     return output_path
 
@@ -1048,7 +1062,7 @@ try {{
     $excel = New-Object -ComObject Excel.Application
     $excel.Visible = $false
     $excel.DisplayAlerts = $false
-    $book = $excel.Workbooks.Open({json.dumps(str(xlsx_path))}, 0, $true)
+    $book = $excel.Workbooks.Open({_powershell_literal(xlsx_path)}, 0, $true)
     # The workbook includes support sheets. Export only the first, protected invoice sheet.
     $sheet = $book.Worksheets.Item(1)
     # Older saved copies may predate the print rule, so enforce it immediately
@@ -1067,7 +1081,7 @@ try {{
     $sheet.PageSetup.CenterHorizontally = $true
     $sheet.PageSetup.CenterVertically = $false
     $sheet.PageSetup.PrintArea = '{INVOICE_PRINT_AREA}'
-    $sheet.ExportAsFixedFormat(0, {json.dumps(str(output_path))}, 0, $true, $false)
+    $sheet.ExportAsFixedFormat(0, {_powershell_literal(output_path)}, 0, $true, $false)
 }} finally {{
     if ($book) {{ $book.Close($false) }}
     if ($sheet) {{ [void][System.Runtime.InteropServices.Marshal]::FinalReleaseComObject($sheet) }}

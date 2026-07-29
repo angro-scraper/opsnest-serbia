@@ -1404,6 +1404,61 @@ INVOICE_EDITOR_UI_TRANSLATIONS = {
 }
 for _invoice_editor_language, _invoice_editor_labels in INVOICE_EDITOR_UI_TRANSLATIONS.items():
     UI_TRANSLATIONS.setdefault(_invoice_editor_language, {}).update(_invoice_editor_labels)
+
+# Final Bulgarian UI audit.  These captions are produced by the main command
+# bar, finance centre and archive screen, so keeping them here prevents a
+# language switch from leaving a mixed Serbian/English business interface.
+BULGARIAN_UI_AUDIT_TRANSLATIONS = {
+    "Šabloni fakture": "Шаблони за фактури",
+    "Odobrenja": "Одобрения",
+    "Odobrenja ({count})": "Одобрения ({count})",
+    "Firma i projekti": "Фирма и проекти",
+    "Dashboard": "Табло",
+    "Finansije": "Финанси",
+    "Kupci": "Клиенти",
+    "Backup": "Архив",
+    "Smanji": "Минимизирай",
+    "Uvećaj": "Увеличи",
+    "Vrati veličinu": "Възстанови размера",
+    "PDF / štampa": "PDF / печат",
+    "Pregled fakture": "Преглед на фактура",
+    "Pregled PDF / štampa": "PDF преглед / печат",
+    "Priprema PDF-a fakture": "Подготовка на PDF фактура",
+    "PDF iz originalnog Excel šablona nije moguće napraviti:": "PDF от оригиналния Excel шаблон не може да бъде създаден:",
+    "Faktura": "Фактура",
+    "Banka": "Банка",
+    "Spremno za plaćanje": "Готово за плащане",
+    "Operativni pregled za vlasnika: obaveze, novac i plan. Nije zamena za lokalno zakonsko knjigovodstvo ili poresku prijavu.": "Оперативен преглед за собственика: задължения, средства и план. Не замества местното законово счетоводство или данъчна декларация.",
+    "Kontrola odobrenja: limit vlasnika nije podešen. Vlasnik može uključiti limit u Podacima firme.": "Контрол на одобренията: лимитът на собственика не е зададен. Собственикът може да го включи в Данни за фирмата.",
+    "Otvori dokument": "Отвори документ",
+    "Odobri obavezu": "Одобри задължението",
+    "Odbij obavezu": "Отхвърли задължението",
+    "Vrati na proveru": "Върни за преглед",
+    "Komentari": "Коментари",
+    "Mesečna kontrola": "Месечен контрол",
+    "Izvezi audit": "Експортирай одита",
+    "Plan plaćanja": "План за плащане",
+    "P&L i PDV firme": "P&L и ДДС на фирмата",
+    "Dodaj rashod / ulaznu fakturu": "Добави разход / входяща фактура",
+    "Dodaj plaćanje": "Добави плащане",
+    "Izdaj avans": "Издай аванс",
+    "Pregled na pečalba": "Преглед на печалбата",
+    "Dodaj izlaznu fakturu": "Добави изходяща фактура",
+    "Budžet na projekta": "Бюджет на проекта",
+    "Izvoz za računovođu": "Експорт за счетоводител",
+    "Ponavljajuće fakture": "Повтарящи се фактури",
+    "Dokumenti na projekta": "Документи на проекта",
+    "Root folder": "Основна папка",
+    "Database": "База данни",
+    "Last backup": "Последно архивиране",
+    "Backup now": "Архивирай сега",
+    "Restore backup": "Възстанови архив",
+    "Open root folder": "Отвори основната папка",
+    "Open invoices folder": "Отвори папката с фактури",
+    "Open backup folder": "Отвори папката с архиви",
+    "Automatski backup se pravi pri čuvanju faktura i uplata. Ovaj ekran služi za ručni backup.": "Автоматичен архив се създава при записване на фактури и плащания. Този екран е за ръчно архивиране.",
+}
+UI_TRANSLATIONS.setdefault("bg", {}).update(BULGARIAN_UI_AUDIT_TRANSLATIONS)
 _active_ui_language = "sr"
 CLIPBOARD_HEADER_ALIASES = {
     "category": ("kategorija", "category", "tip", "vrsta", "vid", "vid smr", "vid radova"),
@@ -1493,7 +1548,7 @@ OPSNEST_WEBSITE_URL = "https://opsnestone.com"
 OPSNEST_CLOUD_API_URL = "https://api.opsnestone.com"
 OPSNEST_PRICING_URL = f"{OPSNEST_WEBSITE_URL}/pricing"
 OPSNEST_PAYPAL_CANCELLATION_URL = "https://www.paypal.com/myaccount/autopay/"
-OPSNEST_APP_VERSION = "2.13.9"
+OPSNEST_APP_VERSION = "2.13.10"
 
 
 def normalize_ui_language(value: Any) -> str:
@@ -2795,9 +2850,10 @@ class MainApp(tk.Tk):
             return
         if self.invoice_approval_enabled() and self.is_owner_or_administrator():
             pending_count = self.db.pending_invoice_approval_count()
-            button.configure(text=f"Odobrenja ({pending_count})" if pending_count else "Odobrenja", state="normal")
+            caption = tr("Odobrenja ({count})").format(count=pending_count) if pending_count else tr("Odobrenja")
+            button.configure(text=caption, state="normal")
         else:
-            button.configure(text="Odobrenja", state="disabled")
+            button.configure(text=tr("Odobrenja"), state="disabled")
 
     def open_invoice_templates(self) -> None:
         InvoiceTemplateDialog(self, self)
@@ -12897,7 +12953,7 @@ class InvoiceEditor(tk.Toplevel):
     def _update_window_button(self) -> None:
         if self._window_mode_button is None:
             return
-        self._window_mode_button.configure(text="Vrati veličinu" if self.state() == "zoomed" else "Uvećaj")
+        self._window_mode_button.configure(text=tr("Vrati veličinu" if self.state() == "zoomed" else "Uvećaj"))
 
     def toggle_window_mode(self) -> None:
         if self.state() == "zoomed":
@@ -13334,7 +13390,7 @@ class InvoiceEditor(tk.Toplevel):
             messagebox.showerror("Greška", "Faktura nije pronađena.")
             self.destroy()
             return
-        self.vars["invoice_number"].set(invoice.get("invoice_number", ""))
+        self.vars["invoice_number"].set(tr(str(invoice.get("invoice_number", ""))))
         self.vars["status_code"].set(localized_status_label(invoice.get("status_code", "draft")))
         self.vars["invoice_kind"].set(INVOICE_KIND_LABELS.get(str(invoice.get("invoice_kind") or "standard"), INVOICE_KIND_LABELS["standard"]))
         self.vars["advance_source_invoice_id"].set(str(invoice.get("advance_source_invoice_id") or ""))
@@ -13393,7 +13449,7 @@ class InvoiceEditor(tk.Toplevel):
         today = date.today()
         term_days = int(source.get("customer_payment_term_days") or DEFAULT_PAYMENT_TERM_DAYS)
         self.title("Ispravka fakture")
-        self.vars["invoice_number"].set("Broj će biti dodeljen pri čuvanju")
+        self.vars["invoice_number"].set(tr("Broj će biti dodeljen pri čuvanju"))
         self.vars["status_code"].set(localized_status_label("draft"))
         self.vars["invoice_kind"].set(INVOICE_KIND_LABELS.get(str(source.get("invoice_kind") or "standard"), INVOICE_KIND_LABELS["standard"]))
         self.vars["advance_source_invoice_id"].set(str(source.get("advance_source_invoice_id") or ""))
@@ -13816,7 +13872,7 @@ class InvoiceEditor(tk.Toplevel):
         self.vars["paid_total"].set(fmt_money(totals["paid_total"], self.vars["currency"].get()))
         self.vars["balance_total"].set(fmt_money(totals["balance_total"], self.vars["currency"].get()))
         if not self.vars["invoice_number"].get():
-            self.vars["invoice_number"].set("Broj će biti dodeljen pri čuvanju")
+            self.vars["invoice_number"].set(tr("Broj će biti dodeljen pri čuvanju"))
 
     def clear_quick_line(
         self,

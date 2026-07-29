@@ -573,7 +573,15 @@ class CriticalWorkflowTests(unittest.TestCase):
 
         self.assertEqual(tr("Avansni račun", "bg"), "Авансова фактура")
         self.assertEqual(tr("Forma fakture", "bg"), "Формуляр на фактура")
+        self.assertEqual(tr("Šabloni fakture", "bg"), "Шаблони за фактури")
+        self.assertEqual(tr("Backup now", "bg"), "Архивирай сега")
+        self.assertEqual(tr("Vrati veličinu", "bg"), "Възстанови размера")
         self.assertEqual(canonical_ui_text("Авансова фактура", "bg"), "Avansni račun")
+
+    def test_powershell_paths_keep_single_windows_separators(self) -> None:
+        from delta_fakture_export import _powershell_literal
+
+        self.assertEqual(_powershell_literal(r"C:\OpsNest\Preview\invoice.xlsx"), r"'C:\OpsNest\Preview\invoice.xlsx'")
 
     def test_credit_note_uses_source_invoice_document_language(self) -> None:
         """Follow-up tax documents remain in the language of the original invoice."""
