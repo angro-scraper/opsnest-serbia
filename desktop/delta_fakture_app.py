@@ -1548,7 +1548,7 @@ OPSNEST_WEBSITE_URL = "https://opsnestone.com"
 OPSNEST_CLOUD_API_URL = "https://api.opsnestone.com"
 OPSNEST_PRICING_URL = f"{OPSNEST_WEBSITE_URL}/pricing"
 OPSNEST_PAYPAL_CANCELLATION_URL = "https://www.paypal.com/myaccount/autopay/"
-OPSNEST_APP_VERSION = "2.13.11"
+OPSNEST_APP_VERSION = "2.13.12"
 
 
 def normalize_ui_language(value: Any) -> str:
@@ -2547,6 +2547,7 @@ class MainApp(tk.Tk):
         self.subscription_status_label: ttk.Label | None = None
         self._window_mode_button: ttk.Button | None = None
         self._startup_refresh_job: str | None = None
+        self._online_license_refresh_in_progress = False
         self._pdf_export_active = False
         self._auto_pdf_queue: list[int] = []
         self._auto_pdf_tasks: dict[int, Callable[[], dict[str, Path]]] = {}
@@ -2777,33 +2778,8 @@ class MainApp(tk.Tk):
         connection = connection or self.db.cloud_connection()
         subscription = self.db.get_subscription()
         try:
-            client = OpsNestCloudClient(connection.get("api_url") or OPSNEST_CLOUD_API_URL)
-            workspace_id = str(subscription["workspace_id"])
-            if connection.get("workspace_token"):
-                license_data = client.license_status(
-                    workspace_id=workspace_id,
-                    workspace_token=connection["workspace_token"],
-                )
-            elif connection.get("member_id") and connection.get("member_token"):
-                # Team devices intentionally do not retain the legacy billing
-                # token. Their revocable central session supplies the same safe
-                # entitlement summary without exposing billing credentials.
-                license_data = client.team_license_status(
-                    workspace_id=workspace_id,
-                    member_id=connection["member_id"],
-                    member_token=connection["member_token"],
-                )
-            else:
-                raise CloudApiError("Prvo se prijavite centralnim nalogom firme da bi licenca mogla da se osveži.")
-            self.db.apply_subscription_update(
-                status=str(license_data.get("status") or "verification_pending"),
-                plan_code=str(license_data.get("plan_code") or "starter"),
-                billing_provider="opsnest_cloud",
-                verified_at=str(license_data.get("last_verified_at") or datetime.now().isoformat(timespec="seconds")),
-                trial_started_at=str(license_data.get("trial_started_at") or ""),
-                trial_ends_at=str(license_data.get("trial_ends_at") or ""),
-            )
-            self.refresh_subscription_status_indicator()
+            license_data = self._fetch_online_license_data(connection, subscription)
+            self._apply_online_license_data(license_data)
         except CloudApiError as exc:
             self.db.record_cloud_sync_error(str(exc))
             if not silent:
@@ -2812,6 +2788,70 @@ class MainApp(tk.Tk):
         if not silent:
             messagebox.showinfo("Online licenca", "Status licence je osvežen.", parent=self)
         return license_data
+
+    @staticmethod
+    def _fetch_online_license_data(connection: dict[str, str], subscription: dict[str, Any]) -> dict[str, Any]:
+        """Read entitlement data without touching Tk or the local database."""
+        client = OpsNestCloudClient(connection.get("api_url") or OPSNEST_CLOUD_API_URL)
+        workspace_id = str(subscription["workspace_id"])
+        if connection.get("workspace_token"):
+            return client.license_status(
+                workspace_id=workspace_id,
+                workspace_token=connection["workspace_token"],
+            )
+        if connection.get("member_id") and connection.get("member_token"):
+            # Team devices intentionally do not retain the legacy billing
+            # token. Their revocable central session supplies the same safe
+            # entitlement summary without exposing billing credentials.
+            return client.team_license_status(
+                workspace_id=workspace_id,
+                member_id=connection["member_id"],
+                member_token=connection["member_token"],
+            )
+        raise CloudApiError("Prvo se prijavite centralnim nalogom firme da bi licenca mogla da se osveži.")
+
+    def _apply_online_license_data(self, license_data: dict[str, Any]) -> None:
+        self.db.apply_subscription_update(
+            status=str(license_data.get("status") or "verification_pending"),
+            plan_code=str(license_data.get("plan_code") or "starter"),
+            billing_provider="opsnest_cloud",
+            verified_at=str(license_data.get("last_verified_at") or datetime.now().isoformat(timespec="seconds")),
+            trial_started_at=str(license_data.get("trial_started_at") or ""),
+            trial_ends_at=str(license_data.get("trial_ends_at") or ""),
+        )
+        self.refresh_subscription_status_indicator()
+
+    def refresh_online_license_silently_in_background(self) -> None:
+        """Refresh entitlement after startup without ever blocking the Tk event loop."""
+        if self._online_license_refresh_in_progress or not self._workspace_built:
+            return
+        self._online_license_refresh_in_progress = True
+        connection = dict(self.db.cloud_connection())
+        subscription = dict(self.db.get_subscription())
+
+        def worker() -> None:
+            license_data: dict[str, Any] | None = None
+            error = ""
+            try:
+                license_data = self._fetch_online_license_data(connection, subscription)
+            except CloudApiError as exc:
+                error = str(exc)
+
+            def finish() -> None:
+                self._online_license_refresh_in_progress = False
+                if not self._workspace_built:
+                    return
+                if license_data is not None:
+                    self._apply_online_license_data(license_data)
+                elif error:
+                    self.db.record_cloud_sync_error(error)
+
+            try:
+                self.after(0, finish)
+            except tk.TclError:
+                pass
+
+        threading.Thread(target=worker, name="opsnest-license-refresh", daemon=True).start()
 
     def open_plan_and_billing(self) -> None:
         """Open the permanent package, trial, renewal and support center."""
@@ -3217,12 +3257,7 @@ class MainApp(tk.Tk):
             messagebox.showerror("OpsNest", "Sajt trenutno nije moguće otvoriti.", parent=self)
 
     def refresh_all(self) -> None:
-        if self._startup_refresh_job is not None:
-            try:
-                self.after_cancel(self._startup_refresh_job)
-            except tk.TclError:
-                pass
-            self._startup_refresh_job = None
+        self._cancel_startup_refresh()
         self.company = self.db.get_company()
         self.refresh_subscription_status_indicator()
         self.refresh_invoice_approval_badge()
@@ -3236,16 +3271,36 @@ class MainApp(tk.Tk):
         self.backup_tab.refresh()
 
     def _refresh_secondary_tabs_after_startup(self) -> None:
-        """Fill secondary views after the project-first screen is already visible."""
+        """Start progressive secondary loading after the primary screen has painted."""
         self._startup_refresh_job = None
+        self._refresh_secondary_tab_step(0)
+
+    def _cancel_startup_refresh(self) -> None:
+        if self._startup_refresh_job is not None:
+            try:
+                self.after_cancel(self._startup_refresh_job)
+            except tk.TclError:
+                pass
+            self._startup_refresh_job = None
+
+    def _refresh_secondary_tab_step(self, index: int) -> None:
+        """Refresh one non-primary tab at a time so startup remains interactive."""
         if not self._workspace_built:
             return
-        self.dashboard_tab.refresh()
-        self.banking_tab.refresh()
-        self.financial_control_tab.refresh()
-        self.customers_tab.refresh()
-        self.projects_tab.refresh()
-        self.backup_tab.refresh()
+        secondary_tabs = (
+            self.dashboard_tab,
+            self.banking_tab,
+            self.financial_control_tab,
+            self.customers_tab,
+            self.backup_tab,
+        )
+        if index >= len(secondary_tabs):
+            return
+        tab = secondary_tabs[index]
+        localize_widget_tree(tab, self.ui_language)
+        tab.refresh()
+        if index + 1 < len(secondary_tabs):
+            self._startup_refresh_job = self.after(320, lambda: self._refresh_secondary_tab_step(index + 1))
 
     def _refresh_open_dialogs_for_language(self, code: str) -> None:
         """Apply the selected language to dialogs that are already open."""
@@ -3326,23 +3381,30 @@ class MainApp(tk.Tk):
         self._workspace_built = True
         self.authenticated = True
         self._build_workspace()
-        self.apply_language(self.ui_language, persist=False)
+        # Do not run a full application-wide localization and data refresh
+        # before the first window paint.  The project screen is the working
+        # landing page, so make only it and the header ready immediately;
+        # remaining views are localized and refreshed progressively below.
+        localize_widget_tree(self.header, self.ui_language)
+        localize_widget_tree(self.projects_tab, self.ui_language)
+        self.refresh_subscription_status_indicator()
+        self.refresh_invoice_approval_badge()
         self.tabs.select(self.projects_tab)
         # Show the primary company/project screen immediately. The other tables
         # are loaded just after the window paints instead of blocking login.
         self.projects_tab.refresh()
         self.update_idletasks()
-        self._startup_refresh_job = self.after(80, self._refresh_secondary_tabs_after_startup)
+        self._startup_refresh_job = self.after(350, self._refresh_secondary_tabs_after_startup)
         # A centralized owner or team session also refreshes the entitlement.
         # This lets a linked device receive Founder/Pro access without storing
         # the legacy workspace billing token locally.
-        self.after(900, lambda: self.refresh_online_license(silent=True))
+        self.after(900, self.refresh_online_license_silently_in_background)
         # A non-blocking check keeps releases discoverable without slowing login.
         self.after(1800, self.check_for_updates_silently)
         # Safe automations never issue documents: recurring invoices stay drafts,
         # while payment reminders require explicit SMTP opt-in in company settings.
-        self.after(2200, self.generate_due_recurring_drafts_silently)
-        self.after(2600, self.send_due_payment_reminders_silently)
+        self.after(5000, self.generate_due_recurring_drafts_silently)
+        self.after(6500, self.send_due_payment_reminders_silently)
 
     def generate_due_recurring_drafts_silently(self) -> None:
         """Create due recurring drafts after login without interrupting the owner."""

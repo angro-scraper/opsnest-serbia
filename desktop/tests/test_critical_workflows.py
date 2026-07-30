@@ -620,6 +620,15 @@ class CriticalWorkflowTests(unittest.TestCase):
         self.assertEqual(mocked_urlopen.call_args.kwargs["timeout"], CLOUD_REQUEST_TIMEOUT_SECONDS)
         self.assertGreaterEqual(CLOUD_REQUEST_TIMEOUT_SECONDS, 60)
 
+    def test_startup_defers_remote_license_and_secondary_tab_work(self) -> None:
+        """A cold cloud service must never freeze the first usable desktop screen."""
+        source = (_DESKTOP_ROOT / "delta_fakture_app.py").read_text(encoding="utf-8")
+        self.assertIn("def refresh_online_license_silently_in_background", source)
+        self.assertIn("self.after(900, self.refresh_online_license_silently_in_background)", source)
+        self.assertNotIn("self.after(900, lambda: self.refresh_online_license(silent=True))", source)
+        self.assertIn("def _refresh_secondary_tab_step", source)
+        self.assertIn("self.after(320, lambda: self._refresh_secondary_tab_step(index + 1))", source)
+
     def test_cloud_credentials_are_protected_and_legacy_values_migrate(self) -> None:
         self.db.save_cloud_connection(
             api_url="https://api.example.invalid",
