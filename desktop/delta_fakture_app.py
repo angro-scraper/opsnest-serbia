@@ -68,14 +68,6 @@ from delta_fakture_core import (
     safe_filename,
     status_label,
 )
-from delta_fakture_export import (
-    export_credit_note_bundle,
-    export_invoice_bundle,
-    export_invoice_pdf,
-    export_invoice_xlsx,
-    export_project_accountant_bundle,
-    export_project_vat_evidence_bundle,
-)
 from opsnest_einvoice import (
     bulgaria_en16931_readiness,
     einvoice_readiness,
@@ -87,9 +79,59 @@ from opsnest_financial_advisor import ai_financial_summary, financial_insights
 from opsnest_sef_api import SefApiError, get_sef_version
 from delta_fakture_bank import read_bank_statement, statement_file_hash
 from delta_fakture_mail import build_invoice_email_defaults, send_invoice_email, send_message_via_smtp
-from delta_fakture_pdf import PdfInvoiceReadError, extract_invoice_fields_from_pdf, match_known_partner
 from opsnest_cloud_client import CloudApiError, OpsNestCloudClient
 from opsnest_plans import PLAN_CATALOG, plan_details
+
+
+# The Excel/PDF exporter brings in openpyxl, reportlab and lxml.  They are
+# needed only when the user explicitly previews or exports a document, so
+# loading them while the main window is starting made every login needlessly
+# slow.  Keep this small proxy layer at the application boundary instead.
+_export_module: Any | None = None
+_pdf_reader_module: Any | None = None
+
+
+def _invoice_exporter() -> Any:
+    global _export_module
+    if _export_module is None:
+        import delta_fakture_export
+
+        _export_module = delta_fakture_export
+    return _export_module
+
+
+def _invoice_pdf_reader() -> Any:
+    """Load the PDF/OCR dependency only when an incoming document is selected."""
+    global _pdf_reader_module
+    if _pdf_reader_module is None:
+        import delta_fakture_pdf
+
+        _pdf_reader_module = delta_fakture_pdf
+    return _pdf_reader_module
+
+
+def export_credit_note_bundle(*args: Any, **kwargs: Any) -> dict[str, Path]:
+    return _invoice_exporter().export_credit_note_bundle(*args, **kwargs)
+
+
+def export_invoice_bundle(*args: Any, **kwargs: Any) -> dict[str, Path]:
+    return _invoice_exporter().export_invoice_bundle(*args, **kwargs)
+
+
+def export_invoice_pdf(*args: Any, **kwargs: Any) -> Path:
+    return _invoice_exporter().export_invoice_pdf(*args, **kwargs)
+
+
+def export_invoice_xlsx(*args: Any, **kwargs: Any) -> Path:
+    return _invoice_exporter().export_invoice_xlsx(*args, **kwargs)
+
+
+def export_project_accountant_bundle(*args: Any, **kwargs: Any) -> dict[str, Path]:
+    return _invoice_exporter().export_project_accountant_bundle(*args, **kwargs)
+
+
+def export_project_vat_evidence_bundle(*args: Any, **kwargs: Any) -> dict[str, Path]:
+    return _invoice_exporter().export_project_vat_evidence_bundle(*args, **kwargs)
 
 
 BG = "#F2F6FA"
@@ -1548,7 +1590,7 @@ OPSNEST_WEBSITE_URL = "https://opsnestone.com"
 OPSNEST_CLOUD_API_URL = "https://api.opsnestone.com"
 OPSNEST_PRICING_URL = f"{OPSNEST_WEBSITE_URL}/pricing"
 OPSNEST_PAYPAL_CANCELLATION_URL = "https://www.paypal.com/myaccount/autopay/"
-OPSNEST_APP_VERSION = "2.13.12"
+OPSNEST_APP_VERSION = "2.13.13"
 
 
 def normalize_ui_language(value: Any) -> str:
@@ -2547,6 +2589,8 @@ class MainApp(tk.Tk):
         self.subscription_status_label: ttk.Label | None = None
         self._window_mode_button: ttk.Button | None = None
         self._startup_refresh_job: str | None = None
+        self._deferred_tab_refreshes: dict[str, ttk.Frame] = {}
+        self._deferred_tab_refresh_job: str | None = None
         self._online_license_refresh_in_progress = False
         self._pdf_export_active = False
         self._auto_pdf_queue: list[int] = []
@@ -2727,6 +2771,14 @@ class MainApp(tk.Tk):
         self.tabs.add(self.financial_control_tab, text="Finansije")
         self.tabs.add(self.customers_tab, text="Kupci")
         self.tabs.add(self.backup_tab, text="Backup")
+        self._deferred_tab_refreshes = {
+            str(self.dashboard_tab): self.dashboard_tab,
+            str(self.banking_tab): self.banking_tab,
+            str(self.financial_control_tab): self.financial_control_tab,
+            str(self.customers_tab): self.customers_tab,
+            str(self.backup_tab): self.backup_tab,
+        }
+        self.tabs.bind("<<NotebookTabChanged>>", self._on_workspace_tab_selected, add="+")
         self.tabs.select(self.projects_tab)
         self.refresh_subscription_status_indicator()
         self.refresh_invoice_approval_badge()
@@ -3270,11 +3322,6 @@ class MainApp(tk.Tk):
         self.projects_tab.refresh()
         self.backup_tab.refresh()
 
-    def _refresh_secondary_tabs_after_startup(self) -> None:
-        """Start progressive secondary loading after the primary screen has painted."""
-        self._startup_refresh_job = None
-        self._refresh_secondary_tab_step(0)
-
     def _cancel_startup_refresh(self) -> None:
         if self._startup_refresh_job is not None:
             try:
@@ -3283,24 +3330,33 @@ class MainApp(tk.Tk):
                 pass
             self._startup_refresh_job = None
 
-    def _refresh_secondary_tab_step(self, index: int) -> None:
-        """Refresh one non-primary tab at a time so startup remains interactive."""
+    def _on_workspace_tab_selected(self, _event: tk.Event | None = None) -> None:
+        """Load a secondary workspace only when its tab is actually opened.
+
+        Keeping dashboard, bank, financial controls, customers and backup
+        empty until their first selection prevents a large SQLite/UI refresh
+        from competing with the initial project screen.
+        """
+        if not self._workspace_built or not hasattr(self, "tabs"):
+            return
+        tab = self._deferred_tab_refreshes.pop(self.tabs.select(), None)
+        if tab is None:
+            return
+        if self._deferred_tab_refresh_job is not None:
+            try:
+                self.after_cancel(self._deferred_tab_refresh_job)
+            except tk.TclError:
+                pass
+        self._deferred_tab_refresh_job = self.after_idle(lambda: self._refresh_deferred_tab(tab))
+
+    def _refresh_deferred_tab(self, tab: ttk.Frame) -> None:
+        self._deferred_tab_refresh_job = None
         if not self._workspace_built:
             return
-        secondary_tabs = (
-            self.dashboard_tab,
-            self.banking_tab,
-            self.financial_control_tab,
-            self.customers_tab,
-            self.backup_tab,
-        )
-        if index >= len(secondary_tabs):
-            return
-        tab = secondary_tabs[index]
         localize_widget_tree(tab, self.ui_language)
-        tab.refresh()
-        if index + 1 < len(secondary_tabs):
-            self._startup_refresh_job = self.after(320, lambda: self._refresh_secondary_tab_step(index + 1))
+        refresh = getattr(tab, "refresh", None)
+        if callable(refresh):
+            refresh()
 
     def _refresh_open_dialogs_for_language(self, code: str) -> None:
         """Apply the selected language to dialogs that are already open."""
@@ -3394,7 +3450,6 @@ class MainApp(tk.Tk):
         # are loaded just after the window paints instead of blocking login.
         self.projects_tab.refresh()
         self.update_idletasks()
-        self._startup_refresh_job = self.after(350, self._refresh_secondary_tabs_after_startup)
         # A centralized owner or team session also refreshes the entitlement.
         # This lets a linked device receive Founder/Pro access without storing
         # the legacy workspace billing token locally.
@@ -3403,8 +3458,10 @@ class MainApp(tk.Tk):
         self.after(1800, self.check_for_updates_silently)
         # Safe automations never issue documents: recurring invoices stay drafts,
         # while payment reminders require explicit SMTP opt-in in company settings.
-        self.after(5000, self.generate_due_recurring_drafts_silently)
-        self.after(6500, self.send_due_payment_reminders_silently)
+        # These database automations are useful, but should never compete with
+        # the first task the owner performs after signing in.
+        self.after(15000, self.generate_due_recurring_drafts_silently)
+        self.after(18000, self.send_due_payment_reminders_silently)
 
     def generate_due_recurring_drafts_silently(self) -> None:
         """Create due recurring drafts after login without interrupting the owner."""
@@ -8127,11 +8184,12 @@ class ProjectDocumentDialog(tk.Toplevel):
         if not source:
             return
         try:
-            fields = extract_invoice_fields_from_pdf(source, document_type="output" if is_output else "input")
-        except PdfInvoiceReadError as exc:
-            messagebox.showerror("Uvoz PDF računa", str(exc), parent=self)
-            return
+            pdf_reader = _invoice_pdf_reader()
+            fields = pdf_reader.extract_invoice_fields_from_pdf(source, document_type="output" if is_output else "input")
         except Exception as exc:
+            if exc.__class__.__name__ == "PdfInvoiceReadError":
+                messagebox.showerror("Uvoz PDF računa", str(exc), parent=self)
+                return
             messagebox.showerror("Uvoz PDF računa", f"PDF nije moguće obraditi:\n{exc}", parent=self)
             return
 
@@ -8148,7 +8206,7 @@ class ProjectDocumentDialog(tk.Toplevel):
                 fields["vat_rate_percent"] = float(remembered["vat_rate"]) * 100
             fields["matched_partner"] = True
         else:
-            matched_partner = match_known_partner(
+            matched_partner = pdf_reader.match_known_partner(
                 extracted_partner,
                 [str(customer.get("name") or "") for customer in self.app.db.list_customers(include_archived=True)],
             )

@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from delta_fakture_core import LOGO_FILE, TEMPLATE_XLSX, format_currency, format_date
-from delta_fakture_export import export_invoice_bundle
 
 
 def _sender_address(company: dict[str, Any]) -> tuple[str, str]:
@@ -89,6 +88,11 @@ def compose_invoice_email_message(
     with tempfile.TemporaryDirectory(prefix="delta_mail_") as tmpdir:
         tmpdir_path = Path(tmpdir)
         if include_pdf or include_xlsx:
+            # PDF/XLSX rendering libraries are intentionally loaded only when
+            # the sender asks to attach an invoice.  Importing them during app
+            # startup delayed the first usable desktop screen.
+            from delta_fakture_export import export_invoice_bundle
+
             bundle = export_invoice_bundle(
                 invoice,
                 tmpdir_path,

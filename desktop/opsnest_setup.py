@@ -16,7 +16,7 @@ from tkinter import filedialog, messagebox, ttk
 
 APP_NAME = "OpsNest"
 SETUP_NAME = "OpsNest Setup"
-APP_VERSION = "2.13.12"
+APP_VERSION = "2.13.13"
 UNINSTALL_KEY = rf"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{APP_NAME}"
 
 
