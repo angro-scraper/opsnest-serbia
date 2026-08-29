@@ -81,7 +81,14 @@ from delta_fakture_bank import read_bank_statement, statement_file_hash
 from delta_fakture_mail import build_invoice_email_defaults, send_invoice_email, send_message_via_smtp
 from opsnest_cloud_client import CloudApiError, OpsNestCloudClient
 from opsnest_plans import PLAN_CATALOG, plan_details
-from opsnest_serbia import kd2010_activity, search_kd2010, serbia_activity_profile
+from opsnest_serbia import (
+    KD2010_SOURCE_URL,
+    SERBIA_RULES_VERSION,
+    kd2010_activity,
+    search_kd2010,
+    serbia_activity_profile,
+    serbia_company_checklist,
+)
 
 
 # The Excel/PDF exporter brings in openpyxl, reportlab and lxml.  They are
@@ -1671,6 +1678,20 @@ BUSINESS_PROFILE_LABELS = {
     "transport": "Transport i logistika",
 }
 
+SERBIA_LEGAL_FORM_LABELS = {
+    "company": "Privredno društvo",
+    "entrepreneur": "Preduzetnik",
+    "association": "Udruženje / neprofitna organizacija",
+    "farmer": "Poljoprivredno gazdinstvo",
+}
+
+SERBIA_TAX_MODE_LABELS = {
+    "standard_books": "Vođenje poslovnih knjiga",
+    "lump_sum": "Paušalno oporezivanje",
+    "self_taxing": "Samooporezivanje",
+    "vat_registered": "PDV obveznik",
+}
+
 VAT_REGIME_LABELS = {
     "standard": "Standardni PDV obveznik",
     "exempt": "Oslobođen PDV-a",
@@ -1695,6 +1716,30 @@ def business_profile_code_from_label(value: Any) -> str:
         if text == label:
             return code
     return text if text in BUSINESS_PROFILE_LABELS else "general"
+
+
+def serbia_legal_form_label(value: Any) -> str:
+    return SERBIA_LEGAL_FORM_LABELS.get(str(value or "").strip().lower(), SERBIA_LEGAL_FORM_LABELS["company"])
+
+
+def serbia_legal_form_code_from_label(value: Any) -> str:
+    text = str(value or "").strip()
+    for code, label in SERBIA_LEGAL_FORM_LABELS.items():
+        if text == label:
+            return code
+    return text if text in SERBIA_LEGAL_FORM_LABELS else "company"
+
+
+def serbia_tax_mode_label(value: Any) -> str:
+    return SERBIA_TAX_MODE_LABELS.get(str(value or "").strip().lower(), SERBIA_TAX_MODE_LABELS["standard_books"])
+
+
+def serbia_tax_mode_code_from_label(value: Any) -> str:
+    text = str(value or "").strip()
+    for code, label in SERBIA_TAX_MODE_LABELS.items():
+        if text == label:
+            return code
+    return text if text in SERBIA_TAX_MODE_LABELS else "standard_books"
 
 
 def vat_regime_label(value: Any) -> str:
@@ -5483,8 +5528,8 @@ class CompanyTab(ttk.Frame):
             "logo_path": tk.StringVar(),
             "business_profile": tk.StringVar(value=business_profile_label("general")),
             "activity_code": tk.StringVar(),
-            "legal_form": tk.StringVar(value="company"),
-            "serbia_tax_mode": tk.StringVar(value="standard_books"),
+            "legal_form": tk.StringVar(value=serbia_legal_form_label("company")),
+            "serbia_tax_mode": tk.StringVar(value=serbia_tax_mode_label("standard_books")),
             "country_code": tk.StringVar(value=country_option_label("OTHER")),
             "default_currency": tk.StringVar(value=DEFAULT_CURRENCY),
             "default_vat_rate": tk.StringVar(value="0.20"),
@@ -5536,7 +5581,12 @@ class CompanyTab(ttk.Frame):
             ("serbia_tax_mode", "Poreski režim Srbije"),
             ("logo_path", "Logo putanja"),
         ]:
-            add_field(left, row, 0, label, self.vars[key], width=34)
+            if key == "legal_form":
+                add_combo(left, row, 0, label, self.vars[key], list(SERBIA_LEGAL_FORM_LABELS.values()), width=34)
+            elif key == "serbia_tax_mode":
+                add_combo(left, row, 0, label, self.vars[key], list(SERBIA_TAX_MODE_LABELS.values()), width=34)
+            else:
+                add_field(left, row, 0, label, self.vars[key], width=34)
             if key == "activity_code":
                 ttk.Button(left, text="Izaberi", command=self.choose_activity_code).grid(row=row, column=2, sticky="w", padx=4)
             if key == "logo_path":
@@ -5544,6 +5594,9 @@ class CompanyTab(ttk.Frame):
             row += 1
         ttk.Button(left, text="Registracija / profil firme", command=self.app.open_company_registration).grid(
             row=row, column=0, columnspan=2, sticky="w", pady=(12, 0)
+        )
+        ttk.Button(left, text="Kontrole za Srbiju", command=self.show_serbia_checklist).grid(
+            row=row, column=2, sticky="e", pady=(12, 0)
         )
 
         right = ttk.LabelFrame(outer, text="Podešavanja fakture", padding=12)
@@ -5608,6 +5661,43 @@ class CompanyTab(ttk.Frame):
         if profile:
             self.vars["business_profile"].set(business_profile_label(profile.profile))
 
+    def show_serbia_checklist(self) -> None:
+        if country_code_from_option(self.vars["country_code"].get()) != "RS":
+            messagebox.showinfo(
+                "Kontrole za Srbiju",
+                "Ova kontrolna lista se prikazuje za firmu registrovanu u Srbiji.",
+                parent=self,
+            )
+            return
+        code = self.vars["activity_code"].get().strip()
+        activity = kd2010_activity(code)
+        if not activity or len(activity.code) != 4:
+            messagebox.showinfo(
+                "Kontrole za Srbiju",
+                "Prvo izaberite konkretnu četvorocifrenu šifru delatnosti iz KD 2010 šifarnika.",
+                parent=self,
+            )
+            return
+        checks = serbia_company_checklist(
+            activity_code=code,
+            legal_form=serbia_legal_form_code_from_label(self.vars["legal_form"].get()),
+            tax_mode=serbia_tax_mode_code_from_label(self.vars["serbia_tax_mode"].get()),
+            vat_registered=vat_regime_code_from_label(self.vars["vat_regime"].get()) == "standard",
+        )
+        messagebox.showinfo(
+            "Kontrole za Srbiju",
+            "KD 2010: {code} — {title}\nPravila: {version}\n\n{checks}\n\n"
+            "Ovo je operativna kontrolna lista, ne poresko ili pravno mišljenje. "
+            "Pre predaje potvrđuje je licencirani knjigovođa.\n\nZvanični KD izvor: {source}".format(
+                code=activity.code,
+                title=activity.title,
+                version=SERBIA_RULES_VERSION,
+                checks="\n".join(f"• {item}" for item in checks),
+                source=KD2010_SOURCE_URL,
+            ),
+            parent=self,
+        )
+
     def load_template_defaults(self) -> None:
         self.vars["business_profile"].set(business_profile_label("general"))
         self.vars["country_code"].set(country_option_label("OTHER"))
@@ -5647,6 +5737,10 @@ class CompanyTab(ttk.Frame):
                 value = country_option_label(value)
             if key == "business_profile":
                 value = business_profile_label(value)
+            if key == "legal_form":
+                value = serbia_legal_form_label(value)
+            if key == "serbia_tax_mode":
+                value = serbia_tax_mode_label(value)
             if key == "vat_regime":
                 value = vat_regime_label(value)
             if key == "einvoice_route":
@@ -5682,8 +5776,8 @@ class CompanyTab(ttk.Frame):
                 "logo_path": self.vars["logo_path"].get().strip(),
                 "business_profile": business_profile_code_from_label(self.vars["business_profile"].get()),
                 "activity_code": self.vars["activity_code"].get().strip(),
-                "legal_form": self.vars["legal_form"].get().strip(),
-                "serbia_tax_mode": self.vars["serbia_tax_mode"].get().strip(),
+                "legal_form": serbia_legal_form_code_from_label(self.vars["legal_form"].get()),
+                "serbia_tax_mode": serbia_tax_mode_code_from_label(self.vars["serbia_tax_mode"].get()),
                 "country_code": country_code_from_option(self.vars["country_code"].get()),
                 "default_currency": self.vars["default_currency"].get().strip() or DEFAULT_CURRENCY,
                 "default_vat_rate": float(self.vars["default_vat_rate"].get() or 0.2),
@@ -7189,8 +7283,8 @@ class CompanyRegistrationDialog(tk.Toplevel):
             "logo_path": tk.StringVar(value=str(self.company.get("logo_path") or "")),
             "business_profile": tk.StringVar(value=business_profile_label(self.company.get("business_profile") or "general")),
             "activity_code": tk.StringVar(value=str(self.company.get("activity_code") or "")),
-            "legal_form": tk.StringVar(value=str(self.company.get("legal_form") or "company")),
-            "serbia_tax_mode": tk.StringVar(value=str(self.company.get("serbia_tax_mode") or "standard_books")),
+            "legal_form": tk.StringVar(value=serbia_legal_form_label(self.company.get("legal_form") or "company")),
+            "serbia_tax_mode": tk.StringVar(value=serbia_tax_mode_label(self.company.get("serbia_tax_mode") or "standard_books")),
             "country_code": tk.StringVar(value=country_option_label(self.company.get("country_code") or "OTHER")),
             "default_currency": tk.StringVar(value=str(self.company.get("default_currency") or DEFAULT_CURRENCY)),
             "default_vat_rate": tk.StringVar(value=str(self.company.get("default_vat_rate") or "0.20")),
@@ -7251,7 +7345,12 @@ class CompanyRegistrationDialog(tk.Toplevel):
             ("serbia_tax_mode", "Poreski režim Srbije"),
             ("logo_path", "Logo putanja"),
         ]):
-            add_field(left, row, 0, label, self.vars[key], width=29)
+            if key == "legal_form":
+                add_combo(left, row, 0, label, self.vars[key], list(SERBIA_LEGAL_FORM_LABELS.values()), width=29)
+            elif key == "serbia_tax_mode":
+                add_combo(left, row, 0, label, self.vars[key], list(SERBIA_TAX_MODE_LABELS.values()), width=29)
+            else:
+                add_field(left, row, 0, label, self.vars[key], width=29)
             if key == "activity_code":
                 ttk.Button(left, text="Izaberi", command=self.choose_activity_code).grid(row=row, column=2, sticky="w", padx=4)
             if key == "logo_path":
@@ -7348,6 +7447,8 @@ class CompanyRegistrationDialog(tk.Toplevel):
             payload["ui_language"] = language_code_from_label(payload["ui_language"])
             payload["country_code"] = country_code_from_option(payload["country_code"])
             payload["business_profile"] = business_profile_code_from_label(payload["business_profile"])
+            payload["legal_form"] = serbia_legal_form_code_from_label(payload["legal_form"])
+            payload["serbia_tax_mode"] = serbia_tax_mode_code_from_label(payload["serbia_tax_mode"])
             payload["vat_regime"] = vat_regime_code_from_label(payload["vat_regime"])
             payload["einvoice_route"] = einvoice_route_code_from_label(payload["einvoice_route"])
             payload["smtp_from_name"] = str(payload.get("smtp_from_name") or payload["name"]).strip()
