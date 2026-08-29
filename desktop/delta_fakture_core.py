@@ -31,6 +31,7 @@ except ImportError:  # pragma: no cover - ctypes on supported Python builds incl
 import xml.etree.ElementTree as ET
 
 from opsnest_plans import effective_plan_code, plan_details, plan_includes, plan_limit
+from opsnest_serbia import serbia_activity_profile
 
 
 APP_NAME = "OpsNest"
@@ -2946,6 +2947,10 @@ class Database:
         payload["serbia_tax_mode"] = str(payload.get("serbia_tax_mode") or "standard_books").strip().lower()
         if payload["serbia_tax_mode"] not in {"standard_books", "lump_sum", "self_taxing", "vat_registered"}:
             payload["serbia_tax_mode"] = "standard_books"
+        if payload["country_code"] == "RS" and payload["activity_code"]:
+            activity_profile = serbia_activity_profile(payload["activity_code"])
+            if activity_profile and activity_profile.profile in BUSINESS_PROFILE_CODES:
+                payload["business_profile"] = activity_profile.profile
         payload["default_currency"] = normalize_currency(
             payload.get("default_currency"),
             fallback=default_currency_for_country(payload["country_code"]),
