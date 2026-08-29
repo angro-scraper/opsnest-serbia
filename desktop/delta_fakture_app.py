@@ -5397,6 +5397,9 @@ class CompanyTab(ttk.Frame):
             "director_name": tk.StringVar(),
             "logo_path": tk.StringVar(),
             "business_profile": tk.StringVar(value=business_profile_label("general")),
+            "activity_code": tk.StringVar(),
+            "legal_form": tk.StringVar(value="company"),
+            "serbia_tax_mode": tk.StringVar(value="standard_books"),
             "country_code": tk.StringVar(value=country_option_label("OTHER")),
             "default_currency": tk.StringVar(value=DEFAULT_CURRENCY),
             "default_vat_rate": tk.StringVar(value="0.20"),
@@ -5443,6 +5446,9 @@ class CompanyTab(ttk.Frame):
             ("iban", "IBAN"),
             ("bic", "BIC / SWIFT"),
             ("director_name", "Direktor"),
+            ("activity_code", "Šifra delatnosti (KD 2010)"),
+            ("legal_form", "Pravna forma (preduzetnik/društvo)"),
+            ("serbia_tax_mode", "Poreski režim Srbije"),
             ("logo_path", "Logo putanja"),
         ]:
             add_field(left, row, 0, label, self.vars[key], width=34)
@@ -7085,6 +7091,9 @@ class CompanyRegistrationDialog(tk.Toplevel):
             "director_name": tk.StringVar(value=str(self.company.get("director_name") or "")),
             "logo_path": tk.StringVar(value=str(self.company.get("logo_path") or "")),
             "business_profile": tk.StringVar(value=business_profile_label(self.company.get("business_profile") or "general")),
+            "activity_code": tk.StringVar(value=str(self.company.get("activity_code") or "")),
+            "legal_form": tk.StringVar(value=str(self.company.get("legal_form") or "company")),
+            "serbia_tax_mode": tk.StringVar(value=str(self.company.get("serbia_tax_mode") or "standard_books")),
             "country_code": tk.StringVar(value=country_option_label(self.company.get("country_code") or "OTHER")),
             "default_currency": tk.StringVar(value=str(self.company.get("default_currency") or DEFAULT_CURRENCY)),
             "default_vat_rate": tk.StringVar(value=str(self.company.get("default_vat_rate") or "0.20")),
@@ -7140,6 +7149,9 @@ class CompanyRegistrationDialog(tk.Toplevel):
             ("phone", "Telefon"),
             ("email", "E-mail"),
             ("director_name", "Direktor"),
+            ("activity_code", "Šifra delatnosti (KD 2010)"),
+            ("legal_form", "Pravna forma (preduzetnik/društvo)"),
+            ("serbia_tax_mode", "Poreski režim Srbije"),
             ("logo_path", "Logo putanja"),
         ]):
             add_field(left, row, 0, label, self.vars[key], width=29)

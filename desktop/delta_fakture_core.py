@@ -503,6 +503,9 @@ def default_company_settings() -> dict[str, Any]:
         "director_name": "",
         "logo_path": "",
         "business_profile": "general",
+        "activity_code": "",
+        "legal_form": "company",
+        "serbia_tax_mode": "standard_books",
         "country_code": "OTHER",
         "default_vat_rate": float(DEFAULT_VAT_RATE),
         "default_currency": DEFAULT_CURRENCY,
@@ -886,6 +889,9 @@ class Database:
                 director_name TEXT NOT NULL DEFAULT '',
                 logo_path TEXT NOT NULL DEFAULT '',
                 business_profile TEXT NOT NULL DEFAULT 'general',
+                activity_code TEXT NOT NULL DEFAULT '',
+                legal_form TEXT NOT NULL DEFAULT 'company',
+                serbia_tax_mode TEXT NOT NULL DEFAULT 'standard_books',
                 country_code TEXT NOT NULL DEFAULT 'BG',
                 default_vat_rate REAL NOT NULL DEFAULT 0.20,
                 default_currency TEXT NOT NULL DEFAULT 'EUR',
@@ -1533,6 +1539,9 @@ class Database:
             "auto_payment_reminders": "INTEGER NOT NULL DEFAULT 0",
             "payment_reminder_interval_days": "INTEGER NOT NULL DEFAULT 7",
             "business_profile": "TEXT NOT NULL DEFAULT 'general'",
+            "activity_code": "TEXT NOT NULL DEFAULT ''",
+            "legal_form": "TEXT NOT NULL DEFAULT 'company'",
+            "serbia_tax_mode": "TEXT NOT NULL DEFAULT 'standard_books'",
             "country_code": "TEXT NOT NULL DEFAULT 'BG'",
             "vat_regime": "TEXT NOT NULL DEFAULT 'standard'",
             "einvoice_route": "TEXT NOT NULL DEFAULT 'automatic'",
@@ -2930,6 +2939,13 @@ class Database:
         payload["business_profile"] = str(payload.get("business_profile") or "general").strip().lower()
         if payload["business_profile"] not in BUSINESS_PROFILE_CODES:
             payload["business_profile"] = "general"
+        payload["activity_code"] = re.sub(r"\D", "", str(payload.get("activity_code") or ""))[:5]
+        payload["legal_form"] = str(payload.get("legal_form") or "company").strip().lower()
+        if payload["legal_form"] not in {"entrepreneur", "company", "association", "farmer"}:
+            payload["legal_form"] = "company"
+        payload["serbia_tax_mode"] = str(payload.get("serbia_tax_mode") or "standard_books").strip().lower()
+        if payload["serbia_tax_mode"] not in {"standard_books", "lump_sum", "self_taxing", "vat_registered"}:
+            payload["serbia_tax_mode"] = "standard_books"
         payload["default_currency"] = normalize_currency(
             payload.get("default_currency"),
             fallback=default_currency_for_country(payload["country_code"]),
@@ -2971,7 +2987,7 @@ class Database:
             """
             INSERT INTO company_settings (
                 id, name, eik, vat_number, address, phone, email, bank_name, iban, bic,
-                director_name, logo_path, business_profile, country_code, default_vat_rate, default_currency, vat_regime, einvoice_route, payment_term_days,
+                director_name, logo_path, business_profile, activity_code, legal_form, serbia_tax_mode, country_code, default_vat_rate, default_currency, vat_regime, einvoice_route, payment_term_days,
                 exchange_rate, issue_place, payment_method, smtp_host, smtp_port, smtp_security,
                 smtp_username, smtp_password, smtp_from_name, smtp_from_email, smtp_reply_to,
                 auto_payment_reminders, payment_reminder_interval_days,
@@ -2980,7 +2996,7 @@ class Database:
                 next_invoice_seq, next_credit_note_seq, updated_at
             ) VALUES (
                 1, :name, :eik, :vat_number, :address, :phone, :email, :bank_name, :iban, :bic,
-                :director_name, :logo_path, :business_profile, :country_code, :default_vat_rate, :default_currency, :vat_regime, :einvoice_route, :payment_term_days,
+                :director_name, :logo_path, :business_profile, :activity_code, :legal_form, :serbia_tax_mode, :country_code, :default_vat_rate, :default_currency, :vat_regime, :einvoice_route, :payment_term_days,
                 :exchange_rate, :issue_place, :payment_method, :smtp_host, :smtp_port, :smtp_security,
                 :smtp_username, :smtp_password, :smtp_from_name, :smtp_from_email, :smtp_reply_to,
                 :auto_payment_reminders, :payment_reminder_interval_days,
@@ -3002,6 +3018,9 @@ class Database:
                 director_name=excluded.director_name,
                 logo_path=excluded.logo_path,
                 business_profile=excluded.business_profile,
+                activity_code=excluded.activity_code,
+                legal_form=excluded.legal_form,
+                serbia_tax_mode=excluded.serbia_tax_mode,
                 country_code=excluded.country_code,
                 default_vat_rate=excluded.default_vat_rate,
                 default_currency=excluded.default_currency,
