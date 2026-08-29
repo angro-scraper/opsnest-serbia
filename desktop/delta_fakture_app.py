@@ -172,6 +172,17 @@ INVOICE_DOCUMENT_LANGUAGE_LABELS = {
     "bg": "Български",
     "en": "English",
 }
+
+# A company can choose its working interface language independently.  The
+# document language, however, should start in the language expected by the
+# selected country pack so a newly created invoice needs as little adjustment
+# as possible.  Users can still deliberately change it per invoice.
+COUNTRY_DOCUMENT_LANGUAGE_DEFAULTS = {
+    "RS": "sr",
+    "BG": "bg",
+    "DE": "de",
+    "AT": "de",
+}
 SUBSCRIPTION_COPY = {
     "sr": {
         "trial": "Besplatni probni period: još {days} dana. Kartica nije potrebna.",
@@ -1598,7 +1609,7 @@ OPSNEST_WEBSITE_URL = "https://opsnestone.com"
 OPSNEST_CLOUD_API_URL = "https://api.opsnestone.com"
 OPSNEST_PRICING_URL = f"{OPSNEST_WEBSITE_URL}/pricing"
 OPSNEST_PAYPAL_CANCELLATION_URL = "https://www.paypal.com/myaccount/autopay/"
-OPSNEST_APP_VERSION = "2.13.14"
+OPSNEST_APP_VERSION = "2.13.15"
 
 
 def normalize_ui_language(value: Any) -> str:
@@ -1634,6 +1645,40 @@ def invoice_document_language_code_from_label(value: Any) -> str:
         if text == label:
             return code
     return text.lower() if text.lower() in INVOICE_DOCUMENT_LANGUAGE_LABELS else "sr"
+
+
+def default_document_language_for_country(value: Any) -> str:
+    """Return the safe export-language default for a country pack.
+
+    This is an operational document default, not a translation of user-entered
+    descriptions and never a statement about a country's legal requirements.
+    """
+    country = normalize_country_code(value)
+    return COUNTRY_DOCUMENT_LANGUAGE_DEFAULTS.get(country, "en")
+
+
+def company_automation_summary(country_value: Any, activity_code: Any) -> str:
+    """Explain exactly what the country/activity setup can safely automate."""
+    country = normalize_country_code(country_value)
+    country_name = COUNTRY_NAMES.get(country, COUNTRY_NAMES["OTHER"])["sr"]
+    currency = default_currency_for_country(country)
+    vat_percent = default_vat_rate_for_country(country) * 100
+    document_language = INVOICE_DOCUMENT_LANGUAGE_LABELS[default_document_language_for_country(country)]
+    if country == "RS":
+        activity = kd2010_activity(str(activity_code or ""))
+        profile = serbia_activity_profile(str(activity_code or ""))
+        if activity and len(activity.code) == 4 and profile:
+            profile_text = f"KD 2010 {activity.code} ({activity.title}) → {business_profile_label(profile.profile)}"
+        else:
+            profile_text = "izaberite četvorocifrenu KD 2010 šifru da se profil delatnosti podesi automatski"
+    else:
+        profile_text = "profil delatnosti ostaje podesiv dok lokalni šifarnik za ovu državu ne bude uključen"
+    return (
+        f"Automatski profil: {country_name}; {profile_text}. "
+        f"Podrazumevano: {currency}, standardna PDV stopa {vat_percent:g}%, "
+        f"automatski e-faktura tok i izvoz {document_language}. "
+        "Pravna forma i PDV status se potvrđuju ručno — ne mogu se pouzdano zaključiti iz šifre delatnosti."
+    )
 
 
 COUNTRY_NAMES: dict[str, dict[str, str]] = {
@@ -5592,7 +5637,10 @@ class CompanyTab(ttk.Frame):
             "vendor_bill_owner_approval_threshold": tk.StringVar(value="0"),
             "ui_language": tk.StringVar(value=language_label("sr")),
         }
+        self.automation_summary = tk.StringVar()
         self._build()
+        self.vars["activity_code"].trace_add("write", lambda *_: self._refresh_automation_summary())
+        self._refresh_automation_summary()
 
     def _build(self) -> None:
         outer = ttk.Frame(self, style="App.TFrame")
@@ -5644,21 +5692,22 @@ class CompanyTab(ttk.Frame):
         right.columnconfigure(1, weight=1)
         add_combo(right, 0, 0, "Delatnost", self.vars["business_profile"], list(BUSINESS_PROFILE_LABELS.values()), width=36)
         self.country_combo = add_combo(right, 1, 0, "Država registracije", self.vars["country_code"], country_option_values())
-        self.country_combo.bind("<<ComboboxSelected>>", self._apply_country_vat_default)
-        ttk.Label(right, text="Država predlaže valutu i standardnu PDV stopu. Potvrdite režim sa svojim knjigovođom.", style="Help.TLabel", wraplength=300).grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 5))
-        add_combo(right, 3, 0, "Podrazumevana valuta", self.vars["default_currency"], list(SUPPORTED_CURRENCIES), width=12)
-        self.vat_regime_combo = add_combo(right, 4, 0, "PDV režim", self.vars["vat_regime"], list(VAT_REGIME_LABELS.values()), width=36)
+        self.country_combo.bind("<<ComboboxSelected>>", self._apply_company_automation)
+        ttk.Label(right, textvariable=self.automation_summary, style="Help.TLabel", wraplength=360, justify="left").grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        ttk.Button(right, text="Primeni automatska podešavanja", command=self._apply_company_automation).grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 7))
+        add_combo(right, 4, 0, "Podrazumevana valuta", self.vars["default_currency"], list(SUPPORTED_CURRENCIES), width=12)
+        self.vat_regime_combo = add_combo(right, 5, 0, "PDV režim", self.vars["vat_regime"], list(VAT_REGIME_LABELS.values()), width=36)
         self.vat_regime_combo.bind("<<ComboboxSelected>>", self._apply_vat_regime)
-        add_combo(right, 5, 0, "E-faktura tok", self.vars["einvoice_route"], list(EINVOICE_ROUTE_LABELS.values()), width=36)
-        add_field(right, 6, 0, "PDV stopa", self.vars["default_vat_rate"], width=12)
-        add_field(right, 7, 0, "Rok plaćanja (dani)", self.vars["payment_term_days"], width=12)
-        add_combo(right, 8, 0, "Način plaćanja", self.vars["payment_method"], list(PAYMENT_METHOD_OPTIONS))
-        add_field(right, 9, 0, "Mesto izdavanja", self.vars["issue_place"], width=20)
-        add_combo(right, 10, 0, "Jezik programa", self.vars["ui_language"], list(UI_LANGUAGE_LABELS.values()), width=18)
-        add_field(right, 11, 0, "Limit za odobrenje vlasnika", self.vars["vendor_bill_owner_approval_threshold"], width=14)
-        ttk.Label(right, text="0 = bez limita. Limit važi samo u osnovnoj valuti; strane valute idu vlasniku.", style="Help.TLabel", wraplength=300).grid(row=12, column=0, columnspan=2, sticky="w", pady=(0, 4))
-        ttk.Button(right, text="Sačuvaj", style="Primary.TButton", command=self.save).grid(row=13, column=0, columnspan=2, sticky="w", pady=(12, 0))
-        ttk.Button(right, text="Učitaj iz template-a", command=self.load_template_defaults).grid(row=13, column=1, sticky="e", pady=(12, 0))
+        add_combo(right, 6, 0, "E-faktura tok", self.vars["einvoice_route"], list(EINVOICE_ROUTE_LABELS.values()), width=36)
+        add_field(right, 7, 0, "PDV stopa", self.vars["default_vat_rate"], width=12)
+        add_field(right, 8, 0, "Rok plaćanja (dani)", self.vars["payment_term_days"], width=12)
+        add_combo(right, 9, 0, "Način plaćanja", self.vars["payment_method"], list(PAYMENT_METHOD_OPTIONS))
+        add_field(right, 10, 0, "Mesto izdavanja", self.vars["issue_place"], width=20)
+        add_combo(right, 11, 0, "Jezik programa", self.vars["ui_language"], list(UI_LANGUAGE_LABELS.values()), width=18)
+        add_field(right, 12, 0, "Limit za odobrenje vlasnika", self.vars["vendor_bill_owner_approval_threshold"], width=14)
+        ttk.Label(right, text="0 = bez limita. Limit važi samo u osnovnoj valuti; strane valute idu vlasniku.", style="Help.TLabel", wraplength=300).grid(row=13, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        ttk.Button(right, text="Sačuvaj", style="Primary.TButton", command=self.save).grid(row=14, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ttk.Button(right, text="Učitaj iz template-a", command=self.load_template_defaults).grid(row=14, column=1, sticky="e", pady=(12, 0))
 
         mail = ttk.LabelFrame(outer, text="Slanje e-mailom (SMTP)", padding=12)
         mail.grid(row=1, column=0, columnspan=2, sticky="ew", padx=8, pady=(0, 8))
@@ -5697,9 +5746,7 @@ class CompanyTab(ttk.Frame):
     def choose_activity_code(self) -> None:
         picker = SerbiaActivityPicker(self, self.vars["activity_code"])
         self.wait_window(picker)
-        profile = serbia_activity_profile(self.vars["activity_code"].get())
-        if profile:
-            self.vars["business_profile"].set(business_profile_label(profile.profile))
+        self._apply_company_automation()
 
     def show_serbia_checklist(self) -> None:
         if country_code_from_option(self.vars["country_code"].get()) != "RS":
@@ -5754,18 +5801,35 @@ class CompanyTab(ttk.Frame):
         self.vars["smtp_port"].set(str(DEFAULT_SMTP_PORT))
         self.vars["smtp_from_name"].set(self.vars["name"].get().strip())
         self.vars["smtp_reply_to"].set("")
+        self._apply_company_automation()
 
-    def _apply_country_vat_default(self, _event: tk.Event | None = None) -> None:
+    def _refresh_automation_summary(self) -> None:
+        self.automation_summary.set(company_automation_summary(
+            country_code_from_option(self.vars["country_code"].get()), self.vars["activity_code"].get()
+        ))
+
+    def _apply_company_automation(self, _event: tk.Event | None = None) -> None:
         country_code = country_code_from_option(self.vars["country_code"].get())
         self.vars["default_currency"].set(default_currency_for_country(country_code))
         if vat_regime_code_from_label(self.vars["vat_regime"].get()) == "standard":
             self.vars["default_vat_rate"].set(f"{default_vat_rate_for_country(country_code):.2f}")
+        self.vars["einvoice_route"].set(einvoice_route_label("automatic"))
+        if not self.vars["payment_term_days"].get().strip():
+            self.vars["payment_term_days"].set(str(DEFAULT_PAYMENT_TERM_DAYS))
+        if not self.vars["payment_method"].get().strip():
+            self.vars["payment_method"].set(payment_method_default())
+        if country_code == "RS":
+            profile = serbia_activity_profile(self.vars["activity_code"].get())
+            if profile:
+                self.vars["business_profile"].set(business_profile_label(profile.profile))
+        self._refresh_automation_summary()
 
     def _apply_vat_regime(self, _event: tk.Event | None = None) -> None:
         if vat_regime_code_from_label(self.vars["vat_regime"].get()) == "standard":
-            self._apply_country_vat_default()
+            self._apply_company_automation()
         else:
             self.vars["default_vat_rate"].set("0.00")
+            self._refresh_automation_summary()
 
     def refresh(self) -> None:
         company = self.app.db.get_company()
@@ -5799,6 +5863,7 @@ class CompanyTab(ttk.Frame):
                 self.vars[key].set(bool(int(value or 0)))
                 continue
             self.vars[key].set(str(value))
+        self._refresh_automation_summary()
 
     def save(self) -> None:
         try:
@@ -7337,7 +7402,10 @@ class CompanyRegistrationDialog(tk.Toplevel):
             "login_pin": tk.StringVar(),
             "login_pin_confirm": tk.StringVar(),
         }
+        self.automation_summary = tk.StringVar()
         self._build()
+        self.vars["activity_code"].trace_add("write", lambda *_: self._refresh_automation_summary())
+        self._refresh_automation_summary()
         localize_widget_tree(self, active_ui_language())
         self.transient(master.winfo_toplevel())
         self.grab_set()
@@ -7404,13 +7472,13 @@ class CompanyRegistrationDialog(tk.Toplevel):
         add_field(right, 2, 0, "BIC / SWIFT", self.vars["bic"], width=29)
         add_combo(right, 3, 0, "Delatnost", self.vars["business_profile"], list(BUSINESS_PROFILE_LABELS.values()), width=34)
         self.country_combo = add_combo(right, 4, 0, "Država registracije", self.vars["country_code"], country_option_values(), width=24)
-        self.country_combo.bind("<<ComboboxSelected>>", self._apply_country_vat_default)
-        ttk.Label(right, text="Država predlaže valutu i standardnu PDV stopu. Potvrdite PDV režim sa svojim knjigovođom.", style="Help.TLabel", wraplength=300).grid(row=5, column=0, columnspan=2, sticky="w", pady=(0, 5))
-        add_combo(right, 6, 0, "Podrazumevana valuta", self.vars["default_currency"], list(SUPPORTED_CURRENCIES), width=14)
-        self.vat_regime_combo = add_combo(right, 7, 0, "PDV režim", self.vars["vat_regime"], list(VAT_REGIME_LABELS.values()), width=34)
+        self.country_combo.bind("<<ComboboxSelected>>", self._apply_company_automation)
+        ttk.Label(right, textvariable=self.automation_summary, style="Help.TLabel", wraplength=330, justify="left").grid(row=5, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        ttk.Button(right, text="Primeni automatska podešavanja", command=self._apply_company_automation).grid(row=6, column=0, columnspan=2, sticky="w", pady=(0, 7))
+        add_combo(right, 7, 0, "Podrazumevana valuta", self.vars["default_currency"], list(SUPPORTED_CURRENCIES), width=14)
+        self.vat_regime_combo = add_combo(right, 8, 0, "PDV režim", self.vars["vat_regime"], list(VAT_REGIME_LABELS.values()), width=34)
         self.vat_regime_combo.bind("<<ComboboxSelected>>", self._apply_vat_regime)
-        add_combo(right, 8, 0, "E-faktura tok", self.vars["einvoice_route"], list(EINVOICE_ROUTE_LABELS.values()), width=34)
-        ttk.Label(right, text="Automatski tok vezuje e-fakturu za državu firme. Ručni izbor ne menja poreska pravila niti omogućava pogrešan državni API.", style="Help.TLabel", wraplength=300).grid(row=9, column=0, columnspan=2, sticky="w", pady=(0, 5))
+        add_combo(right, 9, 0, "E-faktura tok", self.vars["einvoice_route"], list(EINVOICE_ROUTE_LABELS.values()), width=34)
         add_field(right, 10, 0, "PDV stopa", self.vars["default_vat_rate"], width=14)
         add_field(right, 11, 0, "Rok plaćanja (dani)", self.vars["payment_term_days"], width=14)
         add_field(right, 12, 0, "Mesto izdavanja", self.vars["issue_place"], width=29)
@@ -7443,21 +7511,33 @@ class CompanyRegistrationDialog(tk.Toplevel):
     def choose_activity_code(self) -> None:
         picker = SerbiaActivityPicker(self, self.vars["activity_code"])
         self.wait_window(picker)
-        profile = serbia_activity_profile(self.vars["activity_code"].get())
-        if profile:
-            self.vars["business_profile"].set(business_profile_label(profile.profile))
+        self._apply_company_automation()
 
-    def _apply_country_vat_default(self, _event: tk.Event | None = None) -> None:
+    def _refresh_automation_summary(self) -> None:
+        self.automation_summary.set(company_automation_summary(
+            country_code_from_option(self.vars["country_code"].get()), self.vars["activity_code"].get()
+        ))
+
+    def _apply_company_automation(self, _event: tk.Event | None = None) -> None:
         country_code = country_code_from_option(self.vars["country_code"].get())
         self.vars["default_currency"].set(default_currency_for_country(country_code))
         if vat_regime_code_from_label(self.vars["vat_regime"].get()) == "standard":
             self.vars["default_vat_rate"].set(f"{default_vat_rate_for_country(country_code):.2f}")
+        self.vars["einvoice_route"].set(einvoice_route_label("automatic"))
+        if not self.vars["payment_term_days"].get().strip():
+            self.vars["payment_term_days"].set(str(DEFAULT_PAYMENT_TERM_DAYS))
+        if country_code == "RS":
+            profile = serbia_activity_profile(self.vars["activity_code"].get())
+            if profile:
+                self.vars["business_profile"].set(business_profile_label(profile.profile))
+        self._refresh_automation_summary()
 
     def _apply_vat_regime(self, _event: tk.Event | None = None) -> None:
         if vat_regime_code_from_label(self.vars["vat_regime"].get()) == "standard":
-            self._apply_country_vat_default()
+            self._apply_company_automation()
         else:
             self.vars["default_vat_rate"].set("0.00")
+            self._refresh_automation_summary()
 
     def save(self) -> None:
         if not self.vars["name"].get().strip():
@@ -13236,8 +13316,7 @@ class InvoiceEditor(tk.Toplevel):
         current = invoice_document_language_code_from_label(current_value)
         if current_value and current in INVOICE_DOCUMENT_LANGUAGE_LABELS:
             return
-        country = str(self.app.company.get("country_code") or "").upper()
-        default_language = "bg" if country == "BG" else "sr"
+        default_language = default_document_language_for_country(self.app.company.get("country_code"))
         self.vars["document_language"].set(INVOICE_DOCUMENT_LANGUAGE_LABELS[default_language])
 
     def _build(self) -> None:

@@ -578,6 +578,19 @@ class CriticalWorkflowTests(unittest.TestCase):
         self.assertEqual(tr("Vrati veličinu", "bg"), "Възстанови размера")
         self.assertEqual(canonical_ui_text("Авансова фактура", "bg"), "Avansni račun")
 
+    def test_country_and_kd_code_prepare_the_operational_company_defaults(self) -> None:
+        """Country plus a Serbian KD 2010 code must drive new-document defaults."""
+        from delta_fakture_app import company_automation_summary, default_document_language_for_country
+
+        self.assertEqual(default_document_language_for_country("RS"), "sr")
+        self.assertEqual(default_document_language_for_country("BG"), "bg")
+        self.assertEqual(default_document_language_for_country("DE"), "de")
+        self.assertEqual(default_document_language_for_country("HR"), "en")
+        summary = company_automation_summary("RS", "6201")
+        self.assertIn("Digitalne i kreativne usluge", summary)
+        self.assertIn("RSD", summary)
+        self.assertIn("PDV status se potvrđuju ručno", summary)
+
     def test_powershell_paths_keep_single_windows_separators(self) -> None:
         from delta_fakture_export import _powershell_literal
 
