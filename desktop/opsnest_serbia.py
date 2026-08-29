@@ -5,12 +5,97 @@ accountant must confirm each filing and legal interpretation before submission.
 """
 from __future__ import annotations
 
+import json
+import re
+import sys
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 
 
 SERBIA_RULES_VERSION = "RS-2026.08"
 KD2010_SOURCE_URL = "https://www.stat.gov.rs/sr-cyrl/istrazivanja/klasifikacije/"
 SEF_SOURCE_URL = "https://www.efaktura.gov.rs/"
+KD2010_CATALOG_VERSION = "KD2010-RZS-2026.08"
+
+_CYRILLIC_TO_LATIN = str.maketrans({
+    "А": "A", "а": "a", "Б": "B", "б": "b", "В": "V", "в": "v", "Г": "G", "г": "g",
+    "Д": "D", "д": "d", "Ђ": "Đ", "ђ": "đ", "Е": "E", "е": "e", "Ж": "Ž", "ж": "ž",
+    "З": "Z", "з": "z", "И": "I", "и": "i", "Ј": "J", "ј": "j", "К": "K", "к": "k",
+    "Л": "L", "л": "l", "Љ": "Lj", "љ": "lj", "М": "M", "м": "m", "Н": "N", "н": "n",
+    "Њ": "Nj", "њ": "nj", "О": "O", "о": "o", "П": "P", "п": "p", "Р": "R", "р": "r",
+    "С": "S", "с": "s", "Т": "T", "т": "t", "Ћ": "Ć", "ћ": "ć", "У": "U", "у": "u",
+    "Ф": "F", "ф": "f", "Х": "H", "х": "h", "Ц": "C", "ц": "c", "Ч": "Č", "ч": "č",
+    "Џ": "Dž", "џ": "dž", "Ш": "Š", "ш": "š",
+})
+
+
+def _serbian_latin(value: str) -> str:
+    return str(value or "").translate(_CYRILLIC_TO_LATIN)
+
+
+@dataclass(frozen=True)
+class SerbiaActivityCode:
+    """One official KD 2010 row bundled for offline company setup."""
+
+    code: str
+    title: str
+
+
+def _asset_path(name: str) -> Path:
+    """Resolve a bundled asset both from source and a PyInstaller build."""
+    root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return root / "assets" / name
+
+
+@lru_cache(maxsize=1)
+def kd2010_catalog() -> tuple[SerbiaActivityCode, ...]:
+    """Return the official KD 2010 hierarchy without an internet dependency."""
+    path = _asset_path("kd2010.json")
+    try:
+        rows = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("KD 2010 šifarnik nije dostupan u instalaciji.") from exc
+    return tuple(
+        SerbiaActivityCode(str(row.get("code") or "").strip(), _serbian_latin(str(row.get("title") or "").strip()))
+        for row in rows
+        if str(row.get("code") or "").strip() and str(row.get("title") or "").strip()
+    )
+
+
+@lru_cache(maxsize=1)
+def kd2010_code_index() -> dict[str, SerbiaActivityCode]:
+    return {item.code: item for item in kd2010_catalog()}
+
+
+def normalize_kd2010_code(value: str) -> str:
+    return "".join(character for character in str(value or "") if character.isdigit())[:5]
+
+
+def kd2010_activity(code: str) -> SerbiaActivityCode | None:
+    """Find a specific KD 2010 code.  Hierarchy rows are valid too."""
+    return kd2010_code_index().get(normalize_kd2010_code(code))
+
+
+def is_kd2010_activity_code(code: str) -> bool:
+    """A registered primary activity is the four-digit KD 2010 class."""
+    normalized = normalize_kd2010_code(code)
+    return len(normalized) == 4 and normalized in kd2010_code_index()
+
+
+def search_kd2010(query: str, *, limit: int = 250) -> list[SerbiaActivityCode]:
+    """Search code or Serbian title; retaining hierarchy helps users navigate."""
+    normalized = re.sub(r"\s+", " ", str(query or "").strip().casefold())
+    if not normalized:
+        return list(kd2010_catalog()[:limit])
+    tokens = tuple(normalized.split(" "))
+    matches = [
+        item
+        for item in kd2010_catalog()
+        if normalized in item.code.casefold()
+        or all(token in item.title.casefold() for token in tokens)
+    ]
+    return matches[:limit]
 
 
 @dataclass(frozen=True)
@@ -42,7 +127,7 @@ _PROFILES = (
 
 
 def serbia_activity_profile(activity_code: str) -> SerbiaActivityProfile | None:
-    code = "".join(char for char in str(activity_code or "") if char.isdigit())
+    code = normalize_kd2010_code(activity_code)
     return next((item for item in _PROFILES if code.startswith(item.code_prefix)), None)
 
 

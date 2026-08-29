@@ -31,7 +31,7 @@ except ImportError:  # pragma: no cover - ctypes on supported Python builds incl
 import xml.etree.ElementTree as ET
 
 from opsnest_plans import effective_plan_code, plan_details, plan_includes, plan_limit
-from opsnest_serbia import serbia_activity_profile
+from opsnest_serbia import is_kd2010_activity_code, normalize_kd2010_code, serbia_activity_profile
 
 
 APP_NAME = "OpsNest"
@@ -196,6 +196,8 @@ BUSINESS_PROFILE_CODES = {
     "manufacturing",
     "digital_creative",
     "nonprofit",
+    "agriculture",
+    "transport",
 }
 VAT_REGIME_CODES = {"standard", "exempt", "reverse_charge", "out_of_scope"}
 EINVOICE_ROUTE_CODES = {"automatic", "structured_ubl", "external_portal"}
@@ -2940,7 +2942,7 @@ class Database:
         payload["business_profile"] = str(payload.get("business_profile") or "general").strip().lower()
         if payload["business_profile"] not in BUSINESS_PROFILE_CODES:
             payload["business_profile"] = "general"
-        payload["activity_code"] = re.sub(r"\D", "", str(payload.get("activity_code") or ""))[:5]
+        payload["activity_code"] = normalize_kd2010_code(payload.get("activity_code") or "")
         payload["legal_form"] = str(payload.get("legal_form") or "company").strip().lower()
         if payload["legal_form"] not in {"entrepreneur", "company", "association", "farmer"}:
             payload["legal_form"] = "company"
@@ -2948,6 +2950,8 @@ class Database:
         if payload["serbia_tax_mode"] not in {"standard_books", "lump_sum", "self_taxing", "vat_registered"}:
             payload["serbia_tax_mode"] = "standard_books"
         if payload["country_code"] == "RS" and payload["activity_code"]:
+            if not is_kd2010_activity_code(payload["activity_code"]):
+                raise ValueError("Šifra delatnosti nije pronađena u zvaničnom KD 2010 šifarniku.")
             activity_profile = serbia_activity_profile(payload["activity_code"])
             if activity_profile and activity_profile.profile in BUSINESS_PROFILE_CODES:
                 payload["business_profile"] = activity_profile.profile

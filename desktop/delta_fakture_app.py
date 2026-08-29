@@ -81,6 +81,7 @@ from delta_fakture_bank import read_bank_statement, statement_file_hash
 from delta_fakture_mail import build_invoice_email_defaults, send_invoice_email, send_message_via_smtp
 from opsnest_cloud_client import CloudApiError, OpsNestCloudClient
 from opsnest_plans import PLAN_CATALOG, plan_details
+from opsnest_serbia import kd2010_activity, search_kd2010, serbia_activity_profile
 
 
 # The Excel/PDF exporter brings in openpyxl, reportlab and lxml.  They are
@@ -1666,6 +1667,8 @@ BUSINESS_PROFILE_LABELS = {
     "manufacturing": "Proizvodnja",
     "digital_creative": "Digitalne i kreativne usluge",
     "nonprofit": "Udruženje / neprofitna organizacija",
+    "agriculture": "Poljoprivreda i gazdinstva",
+    "transport": "Transport i logistika",
 }
 
 VAT_REGIME_LABELS = {
@@ -5380,6 +5383,88 @@ class CustomerInvoicesDialog(tk.Toplevel):
         self.app.open_or_generate_invoice_output(invoice_id, "pdf")
 
 
+class SerbiaActivityPicker(tk.Toplevel):
+    """Offline searchable picker for the official Serbian KD 2010 catalogue."""
+
+    def __init__(self, master: tk.Widget, variable: tk.StringVar) -> None:
+        super().__init__(master)
+        self.variable = variable
+        self.title("Izaberite šifru delatnosti — KD 2010")
+        self.configure(background=BG)
+        self.resizable(True, True)
+        self.query = tk.StringVar(value=str(variable.get() or "").strip())
+        self._items: dict[str, Any] = {}
+
+        outer = ttk.Frame(self, style="App.TFrame", padding=16)
+        outer.pack(fill="both", expand=True)
+        ttk.Label(outer, text="Šifra delatnosti (Srbija · KD 2010)", style="Section.TLabel").pack(anchor="w")
+        ttk.Label(
+            outer,
+            text="Pretražite šifru ili naziv delatnosti. Šifarnik se čuva u aplikaciji i radi bez interneta.",
+            style="Help.TLabel",
+            wraplength=700,
+        ).pack(anchor="w", pady=(3, 10))
+        search = ttk.Entry(outer, textvariable=self.query, width=58)
+        search.pack(fill="x", pady=(0, 8))
+        search.focus_set()
+        columns = ("code", "title")
+        self.tree = ttk.Treeview(outer, columns=columns, show="headings", height=16, selectmode="browse")
+        self.tree.heading("code", text="Šifra")
+        self.tree.heading("title", text="Naziv delatnosti")
+        self.tree.column("code", width=100, stretch=False, anchor="center")
+        self.tree.column("title", width=620, stretch=True)
+        scrollbar = ttk.Scrollbar(outer, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        footer = ttk.Frame(self, style="App.TFrame", padding=(16, 0, 16, 14))
+        footer.pack(fill="x")
+        ttk.Button(footer, text="Izaberi šifru", style="Primary.TButton", command=self.select).pack(side="left")
+        ttk.Button(footer, text="Otkaži", command=self.destroy).pack(side="right")
+        self.query.trace_add("write", lambda *_: self.refresh())
+        self.tree.bind("<Double-1>", lambda _event: self.select())
+        self.tree.bind("<Return>", lambda _event: self.select())
+        self.bind("<Escape>", lambda _event: self.destroy())
+        self.refresh()
+        self.transient(master.winfo_toplevel())
+        self.grab_set()
+        center_window(self, 820, 570)
+
+    def refresh(self) -> None:
+        selected_code = str(self.variable.get() or "").strip()
+        for item_id in self.tree.get_children():
+            self.tree.delete(item_id)
+        self._items.clear()
+        for item in search_kd2010(self.query.get()):
+            item_id = self.tree.insert("", "end", values=(item.code, item.title))
+            self._items[item_id] = item
+            if item.code == selected_code:
+                self.tree.selection_set(item_id)
+                self.tree.focus(item_id)
+        if not self.tree.selection() and self.tree.get_children():
+            first = self.tree.get_children()[0]
+            self.tree.selection_set(first)
+            self.tree.focus(first)
+
+    def select(self) -> None:
+        selection = self.tree.selection()
+        if not selection:
+            messagebox.showinfo("KD 2010", "Izaberite šifru delatnosti iz liste.", parent=self)
+            return
+        item = self._items.get(selection[0])
+        if not item:
+            return
+        if not item.code.isdigit() or len(item.code) != 4:
+            messagebox.showinfo(
+                "KD 2010",
+                "Izaberite konkretnu četvorocifrenu šifru delatnosti, a ne oblast ili grupu.",
+                parent=self,
+            )
+            return
+        self.variable.set(item.code)
+        self.destroy()
+
+
 class CompanyTab(ttk.Frame):
     def __init__(self, master: tk.Widget, app: MainApp) -> None:
         super().__init__(master, style="App.TFrame")
@@ -5452,6 +5537,8 @@ class CompanyTab(ttk.Frame):
             ("logo_path", "Logo putanja"),
         ]:
             add_field(left, row, 0, label, self.vars[key], width=34)
+            if key == "activity_code":
+                ttk.Button(left, text="Izaberi", command=self.choose_activity_code).grid(row=row, column=2, sticky="w", padx=4)
             if key == "logo_path":
                 ttk.Button(left, text="Izaberi", command=self.browse_logo).grid(row=row, column=2, sticky="w", padx=4)
             row += 1
@@ -5513,6 +5600,13 @@ class CompanyTab(ttk.Frame):
         path = filedialog.askopenfilename(title="Izaberi logo", filetypes=[("Image files", "*.png *.jpg *.jpeg *.webp"), ("All files", "*.*")])
         if path:
             self.vars["logo_path"].set(path)
+
+    def choose_activity_code(self) -> None:
+        picker = SerbiaActivityPicker(self, self.vars["activity_code"])
+        self.wait_window(picker)
+        profile = serbia_activity_profile(self.vars["activity_code"].get())
+        if profile:
+            self.vars["business_profile"].set(business_profile_label(profile.profile))
 
     def load_template_defaults(self) -> None:
         self.vars["business_profile"].set(business_profile_label("general"))
@@ -5587,6 +5681,9 @@ class CompanyTab(ttk.Frame):
                 "director_name": self.vars["director_name"].get().strip(),
                 "logo_path": self.vars["logo_path"].get().strip(),
                 "business_profile": business_profile_code_from_label(self.vars["business_profile"].get()),
+                "activity_code": self.vars["activity_code"].get().strip(),
+                "legal_form": self.vars["legal_form"].get().strip(),
+                "serbia_tax_mode": self.vars["serbia_tax_mode"].get().strip(),
                 "country_code": country_code_from_option(self.vars["country_code"].get()),
                 "default_currency": self.vars["default_currency"].get().strip() or DEFAULT_CURRENCY,
                 "default_vat_rate": float(self.vars["default_vat_rate"].get() or 0.2),
@@ -7155,6 +7252,8 @@ class CompanyRegistrationDialog(tk.Toplevel):
             ("logo_path", "Logo putanja"),
         ]):
             add_field(left, row, 0, label, self.vars[key], width=29)
+            if key == "activity_code":
+                ttk.Button(left, text="Izaberi", command=self.choose_activity_code).grid(row=row, column=2, sticky="w", padx=4)
             if key == "logo_path":
                 ttk.Button(left, text="Izaberi", command=self.browse_logo).grid(row=row, column=2, sticky="w", padx=4)
 
@@ -7201,6 +7300,13 @@ class CompanyRegistrationDialog(tk.Toplevel):
         path = filedialog.askopenfilename(title="Izaberi logo", filetypes=[("Image files", "*.png *.jpg *.jpeg *.webp"), ("All files", "*.*")])
         if path:
             self.vars["logo_path"].set(path)
+
+    def choose_activity_code(self) -> None:
+        picker = SerbiaActivityPicker(self, self.vars["activity_code"])
+        self.wait_window(picker)
+        profile = serbia_activity_profile(self.vars["activity_code"].get())
+        if profile:
+            self.vars["business_profile"].set(business_profile_label(profile.profile))
 
     def _apply_country_vat_default(self, _event: tk.Event | None = None) -> None:
         country_code = country_code_from_option(self.vars["country_code"].get())
