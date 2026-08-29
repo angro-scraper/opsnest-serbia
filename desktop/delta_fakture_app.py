@@ -4266,6 +4266,7 @@ class FinancialControlTab(ttk.Frame):
         self.app = app
         self.balance_var, self.payables_var, self.ready_to_pay_var, self.profit_var, self.flow_var = (tk.StringVar() for _ in range(5))
         self.approval_policy_var = tk.StringVar()
+        self.serbia_profile_var = tk.StringVar()
         self.cash_horizon = tk.IntVar(value=30)
         self._build()
 
@@ -4285,6 +4286,10 @@ class FinancialControlTab(ttk.Frame):
         ttk.Label(intro, text=tr("Finansijski centar firme"), style="Section.TLabel").pack(anchor="w")
         ttk.Label(intro, text=tr("Operativni pregled za vlasnika: obaveze, novac i plan. Nije zamena za lokalno zakonsko knjigovodstvo ili poresku prijavu."), style="Help.TLabel", wraplength=1200).pack(anchor="w", pady=(3, 0))
         ttk.Label(intro, textvariable=self.approval_policy_var, style="Help.TLabel", wraplength=1200).pack(anchor="w", pady=(3, 0))
+        serbia_line = ttk.Frame(intro, style="Panel.TFrame")
+        serbia_line.pack(fill="x", pady=(3, 0))
+        ttk.Label(serbia_line, textvariable=self.serbia_profile_var, style="Help.TLabel", wraplength=1040).pack(side="left", anchor="w")
+        ttk.Button(serbia_line, text="Kontrole Srbije", command=self.show_serbia_controls).pack(side="right")
         actions = ttk.Frame(outer, style="App.TFrame")
         actions.grid(row=1, column=0, sticky="ew", pady=(0, 8))
         primary_actions = ttk.Frame(actions, style="App.TFrame")
@@ -4355,6 +4360,18 @@ class FinancialControlTab(ttk.Frame):
     def refresh(self) -> None:
         company = self.app.company
         currency = company.get("default_currency") or DEFAULT_CURRENCY
+        if normalize_country_code(company.get("country_code")) == "RS":
+            activity = kd2010_activity(company.get("activity_code") or "")
+            if activity and len(activity.code) == 4:
+                self.serbia_profile_var.set(
+                    f"Srbija · KD 2010 {activity.code} — {activity.title} · "
+                    f"{serbia_legal_form_label(company.get('legal_form'))} · "
+                    f"{serbia_tax_mode_label(company.get('serbia_tax_mode'))}"
+                )
+            else:
+                self.serbia_profile_var.set("Srbija · izaberite četvorocifrenu KD 2010 šifru u Podacima firme pre mesečne kontrole.")
+        else:
+            self.serbia_profile_var.set("")
         owner_ceiling = money_round(company.get("vendor_bill_owner_approval_threshold") or 0)
         if owner_ceiling > 0:
             self.approval_policy_var.set(
@@ -4411,6 +4428,29 @@ class FinancialControlTab(ttk.Frame):
             )
         for index, event in enumerate(self.app.db.list_financial_audit(limit=150)):
             self.audit_tree.insert("", "end", values=(event.get("created_at"), f"{event.get('record_type')} #{event.get('record_id')}", event.get("action_code"), event.get("details")), tags=(tree_row_tag(index),))
+
+    def show_serbia_controls(self) -> None:
+        company = self.app.company
+        if normalize_country_code(company.get("country_code")) != "RS":
+            messagebox.showinfo("Kontrole Srbije", "Ova kontrolna lista važi samo za firme registrovane u Srbiji.", parent=self)
+            return
+        activity = kd2010_activity(company.get("activity_code") or "")
+        if not activity or len(activity.code) != 4:
+            messagebox.showinfo("Kontrole Srbije", "U Podacima firme prvo izaberite konkretnu KD 2010 šifru delatnosti.", parent=self)
+            return
+        checks = serbia_company_checklist(
+            activity_code=activity.code,
+            legal_form=str(company.get("legal_form") or "company"),
+            tax_mode=str(company.get("serbia_tax_mode") or "standard_books"),
+            vat_registered=str(company.get("vat_regime") or "standard") == "standard",
+        )
+        messagebox.showinfo(
+            "Kontrole Srbije",
+            f"KD 2010 {activity.code} — {activity.title}\nPravila: {SERBIA_RULES_VERSION}\n\n"
+            + "\n".join(f"• {item}" for item in checks)
+            + "\n\nOvo je radna kontrola. Zakonsku prijavu i tumačenje potvrđuje licencirani knjigovođa.",
+            parent=self,
+        )
 
     def new_vendor(self) -> None:
         if self.app.require_team_permission({"owner", "administrator", "accountant"}, "unos dobavljača", parent=self): FinancialRecordDialog(self, self.app, "vendor", on_saved=self.refresh)
