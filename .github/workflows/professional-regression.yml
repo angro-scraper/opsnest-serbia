@@ -14,6 +14,7 @@ jobs:
   controlled-finance-flows:
     name: Cloud and Desktop control flows
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
@@ -33,7 +34,7 @@ jobs:
       - name: Install controlled test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r opsnest_cloud/requirements.txt openpyxl reportlab Pillow pypdf
+          python -m pip install -r opsnest_cloud/requirements.txt openpyxl reportlab Pillow pypdf lxml
 
       - name: Compile cloud control boundary
         run: |

@@ -28,7 +28,7 @@ Popravke postojećeg OpsNesta, bez redizajna, novih navigacionih tokova, zamene 
 
 ## Artefakt
 
-Status: **instalater je postavljen u javni downloads i ponovo preuzet; veličina i SHA-256 potpuno se poklapaju. Prebacivanje API manifesta i linkova sajta prati ova izmena.**
+Status: **instalater je objavljen i ponovo preuzet; veličina i SHA-256 potpuno se poklapaju. Produkcioni update API i download preusmerenje nude 2.13.16, svih osam javnih HTML stranica odgovara pripremljenim fajlovima i nema linkova na 2.9.9.**
 
 - Putanja: `desktop/release/OpsNest-Setup-2.13.16.exe`
 - Veličina: `114218582` bajtova.
@@ -51,7 +51,9 @@ Napravljen PyInstaller-om 6.22.2 / Python 3.13.14. Build prijavljuje opciona upo
 6. Objaviti pripremljeni sadržaj `public_site`, sa postojećim `.htaccess`. Ne brisati folder `downloads`.
 7. Potvrditi da sajt, javni update API i desktop preuzimaju isti verifikovan paket. Potvrditi instalaciju/povratak na prethodnu verziju uz očuvanje poslovnih podataka.
 
-Objava je odobrena porukom korisnika „objavi i poslednji intaler“. Instalater je javno dostupan i potvrđen pre izmene rezervnog manifesta na 2.13.16. Kopije osam postojećih javnih HTML stranica sačuvane su lokalno pre zamene. Postojeći izgled, CSS, `.htaccess`, stariji instalateri i poslovni podaci nisu predmet ove objave. Konačna provera API-ja i stranica radi se posle deploy-a.
+Objava je odobrena porukom korisnika „objavi i poslednji intaler“. Instalater je javno dostupan i potvrđen pre izmene rezervnog manifesta na 2.13.16. Kopije osam postojećih javnih HTML stranica sačuvane su lokalno pre zamene. Postojeći izgled, CSS, `.htaccess`, stariji instalateri i poslovni podaci nisu menjani. Posle deploy-a potvrđeni su `/workspace` (200), `/health/ready` (ready, database ok), `/download/desktop` (307, no-store, URL 2.13.16), `/v1/public/desktop-update` (ista verzija/URL/SHA), te `/activate` i `/checkout` bez parametara (kontrolisani 400). Render je prikazao commit `fca59c5` kao Live.
+
+Prvi udaljeni CI pokušaj je otkrio da testno okruženje nema `lxml` (5 import grešaka na Linux-u; Windows posao otkazan zbog matrix fail-fast). Zavisnost je dodata testnom workflow-u i isključen je fail-fast da obe platforme završe nezavisno. Ovo ne menja objavljeni instalater; lokalni paket već sadrži tu zavisnost.
 
 ## Granice provere
 
