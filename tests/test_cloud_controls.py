@@ -90,6 +90,83 @@ from opsnest_cloud.time_utils import utc_now  # noqa: E402
 
 
 class CloudControlTests(unittest.TestCase):
+    def test_founder_requires_verified_server_allowlist_and_can_be_revoked(self):
+        from opsnest_cloud import services
+        from opsnest_plans import PLAN_CATALOG
+        workspace = Workspace(id=str(uuid.uuid4()), owner_email=" Founder@Example.Test ",
+                              plan_code="starter", subscription_status="expired")
+        with patch.object(services, "settings", SimpleNamespace(founder_workspace_emails=("founder@example.test",))):
+            self.assertEqual(services.effective_license(workspace)["access_source"], "subscription")
+            workspace.email_verified_at = utc_now()
+            license_data = services.effective_license(workspace)
+            self.assertEqual(license_data["plan_name"], "Founder")
+            self.assertTrue(license_data["can_write"])
+            self.assertTrue(all(value is None for value in license_data["limits"].values()))
+            self.assertTrue(license_data["ai_advisor"]["unlimited"])
+            self.assertIsNone(license_data["ai_advisor"]["requests_remaining"])
+            workspace.owner_email = "customer@example.test"
+            workspace.plan_code = "pro"
+            workspace.subscription_status = "active"
+            self.assertEqual(services.effective_license(workspace)["limits"]["seats"], 20)
+        with patch.object(services, "settings", SimpleNamespace(founder_workspace_emails=())):
+            workspace.owner_email = "founder@example.test"
+            self.assertFalse(services.effective_license(workspace)["package_unlimited"])
+        self.assertNotIn("founder", PLAN_CATALOG)
+
+    def test_founder_ai_has_no_monthly_package_cap_but_keeps_usage_and_role_controls(self):
+        from opsnest_cloud import services, main
+        workspace = Workspace(id=str(uuid.uuid4()), owner_email="founder@example.test", email_verified_at=utc_now(),
+                              ai_advisor_tier="ai_pro", ai_advisor_status="active",
+                              ai_advisor_period_started_at=utc_now(), ai_advisor_requests_used=300)
+        payload = main.FinancialAdviceRequest(invoice_count=0, issued_total=0, paid_total=0, outstanding_total=0,
+                    overdue_total=0, output_vat_total=0, collection_rate_percent=0, overdue_share_percent=0, top_debtor_share_percent=0)
+        db = MagicMock()
+        db.get.return_value = workspace
+        context = main.MemberContext(workspace=workspace, member=SimpleNamespace(role="owner"), session=None)
+        with patch.object(services, "settings", SimpleNamespace(founder_workspace_emails=("founder@example.test",))), \
+             patch.object(main, "_generate_ai_financial_advice", return_value="Test advice") as generate, \
+             patch.object(main, "_limit_ai_advice") as rate_limit, patch.object(main, "_record_audit"):
+            result = main.team_ai_financial_advice(payload, context, db)
+            self.assertIsNone(result["requests_remaining"])
+            self.assertEqual(workspace.ai_advisor_requests_used, 301)
+            rate_limit.assert_called_once_with(workspace.id)
+            for role in ("member", "accountant", "administrator"):
+                context.member.role = role
+                with self.assertRaises(HTTPException) as caught:
+                    main.team_ai_financial_advice(payload, context, db)
+                self.assertEqual(caught.exception.status_code, 403)
+            self.assertEqual(generate.call_count, 1)
+            workspace.owner_email = "regular@example.test"
+            with self.assertRaises(HTTPException) as caught:
+                services.consume_ai_advisor_request(workspace)
+            self.assertEqual(caught.exception.status_code, 429)
+        with TestClient(app) as client:
+            response = client.post("/v1/team/ai/financial-advice", json=payload.model_dump(), headers={
+                "X-OpsNest-Workspace": str(uuid.uuid4()), "X-OpsNest-Member": str(uuid.uuid4()), "Authorization": "Bearer invalid"})
+            self.assertEqual(response.status_code, 401)
+
+    def test_founder_invitation_over_twenty_seats_and_checkout_guard(self):
+        from opsnest_cloud import services, main
+        workspace = Workspace(id=str(uuid.uuid4()), owner_email="founder@example.test", email_verified_at=utc_now(),
+                              plan_code="pro", subscription_status="active", company_name="QA")
+        context = main.MemberContext(workspace=workspace, member=SimpleNamespace(id="qa-owner", role="owner"), session=None)
+        db = MagicMock()
+        db.scalar.return_value = None
+        db.scalars.return_value.all.return_value = []
+        invitation = main.TeamInvitationRequest(email="new@example.test", display_name="QA Member", role="accountant")
+        with patch.object(services, "settings", SimpleNamespace(founder_workspace_emails=("founder@example.test",))), \
+             patch.object(main, "_team_seats_used", return_value=1000), \
+             patch.object(main, "send_team_invitation") as send, patch.object(main, "_record_audit"):
+            main.invite_team_member(invitation, context, db)
+            send.assert_called_once()
+            with self.assertRaises(HTTPException) as caught:
+                main.create_checkout_session("pro", workspace)
+            self.assertEqual(caught.exception.status_code, 409)
+            workspace.owner_email = "regular@example.test"
+            with self.assertRaises(HTTPException) as caught:
+                main.invite_team_member(invitation, context, db)
+            self.assertEqual(caught.exception.status_code, 409)
+
     @classmethod
     def setUpClass(cls) -> None:
         create_schema()

@@ -1,6 +1,7 @@
 """Bulgarian labels for the existing collaboration portal (not document contents)."""
 
 BG_TRANSLATIONS = {
+    "Founder — no package limits": "Founder — без пакетни ограничения", "Unlimited": "Неограничено",
     "Language": "Език", "Workspace": "Работно пространство", "Sign out": "Изход",
     "Secure company access": "Защитен достъп до фирмата",
     "One place for the owner, accountant and team.": "Едно място за собственика, счетоводителя и екипа.",

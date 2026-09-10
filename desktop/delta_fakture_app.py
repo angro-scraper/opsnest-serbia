@@ -83,7 +83,7 @@ from opsnest_sef_api import SefApiError, get_sef_version
 from delta_fakture_bank import read_bank_statement, statement_file_hash
 from delta_fakture_mail import build_invoice_email_defaults, send_invoice_email, send_message_via_smtp
 from opsnest_cloud_client import CloudApiError, OpsNestCloudClient
-from opsnest_plans import PLAN_CATALOG, plan_details
+from opsnest_plans import PLAN_CATALOG, plan_details, founder_plan_label
 from opsnest_company_i18n import COMPANY_TRANSLATIONS
 from opsnest_serbia import (
     KD2010_SOURCE_URL,
@@ -1609,7 +1609,7 @@ OPSNEST_WEBSITE_URL = "https://opsnestone.com"
 OPSNEST_CLOUD_API_URL = "https://api.opsnestone.com"
 OPSNEST_PRICING_URL = f"{OPSNEST_WEBSITE_URL}/pricing"
 OPSNEST_PAYPAL_CANCELLATION_URL = "https://www.paypal.com/myaccount/autopay/"
-OPSNEST_APP_VERSION = "2.13.16"
+OPSNEST_APP_VERSION = "2.13.17"
 
 
 def normalize_ui_language(value: Any) -> str:
@@ -2880,6 +2880,8 @@ class MainApp(tk.Tk):
 
     def subscription_status_text(self) -> str:
         subscription = self.db.get_subscription()
+        if subscription.get("access_source") == "founder":
+            return founder_plan_label(active_ui_language())
         status = str(subscription.get("status") or "not_started").lower()
         if status == "trial":
             days = int(subscription.get("days_remaining") or 0)
@@ -2958,10 +2960,13 @@ class MainApp(tk.Tk):
         raise CloudApiError("Prvo se prijavite centralnim nalogom firme da bi licenca mogla da se osveži.")
 
     def _apply_online_license_data(self, license_data: dict[str, Any]) -> None:
+        if str(license_data.get("workspace_id") or "") != str(self.db.get_subscription()["workspace_id"]):
+            raise CloudApiError("Licenca ne pripada prijavljenom radnom prostoru.")
         self.db.apply_subscription_update(
             status=str(license_data.get("status") or "verification_pending"),
             plan_code=str(license_data.get("plan_code") or "starter"),
             billing_provider="opsnest_cloud",
+            access_source=str(license_data.get("access_source") or "subscription"),
             verified_at=str(license_data.get("last_verified_at") or datetime.now().isoformat(timespec="seconds")),
             trial_started_at=str(license_data.get("trial_started_at") or ""),
             trial_ends_at=str(license_data.get("trial_ends_at") or ""),
@@ -6952,11 +6957,19 @@ class PlanAndBillingDialog(tk.Toplevel):
         self.status_var.set(self.app.subscription_status_text())
         self.plan_var.set(plan_details(purchased)["name"])
         self.feature_plan_var.set(plan_details(effective)["name"])
+        founder = subscription.get("access_source") == "founder"
+        if founder:
+            self.plan_var.set(founder_plan_label(active_ui_language()))
+            self.feature_plan_var.set("Founder")
         self.trial_start_var.set(self._date_text(subscription.get("trial_started_at")))
         self.trial_end_var.set(self._date_text(subscription.get("trial_ends_at")))
         self.next_billing_var.set(self._date_text(self.summary.get("next_billing_at")) if self.summary else "-")
         ai_advisor = dict(self.summary.get("ai_advisor") or {})
-        if bool(ai_advisor.get("enabled")):
+        if founder or bool(ai_advisor.get("unlimited")):
+            self.ai_addon_var.set("AI · " + tr("Neograničeno"))
+            for button in self.ai_addon_buttons.values():
+                button.configure(state="disabled")
+        elif bool(ai_advisor.get("enabled")):
             self.ai_addon_var.set(f"{ai_advisor.get('tier_name', 'AI savetnik')} aktivan · {ai_advisor.get('requests_remaining', 0)} / {ai_advisor.get('monthly_requests', 100)} saveta preostalo")
             for button in self.ai_addon_buttons.values():
                 button.configure(state="disabled")
@@ -7013,29 +7026,17 @@ class PlanAndBillingDialog(tk.Toplevel):
     def refresh_online(self) -> None:
         connection = self.app.db.cloud_connection()
         subscription = self.app.db.get_subscription()
-        if not connection["workspace_token"]:
-            if self.app.active_team_role():
-                messagebox.showinfo(
-                    "OpsNest tim",
-                    "Status pretplate prikazuje vlasnik firme. Vaš pristup i funkcije preuzimaju se kroz zajednički radni prostor.",
-                    parent=self,
-                )
-                return
+        if not connection["workspace_token"] and not (connection.get("member_id") and connection.get("member_token")):
             self.activate_email()
             return
         def action() -> dict[str, Any]:
+            if not connection["workspace_token"]:
+                return self.app._fetch_online_license_data(connection, subscription)
             client = OpsNestCloudClient(OPSNEST_CLOUD_API_URL)
             return client.billing_summary(workspace_id=str(subscription["workspace_id"]), workspace_token=connection["workspace_token"])
         def success(result: dict[str, Any]) -> None:
             self.summary = result
-            self.app.db.apply_subscription_update(
-                status=str(result.get("status") or "verification_pending"),
-                plan_code=str(result.get("plan_code") or "starter"),
-                billing_provider="opsnest_cloud",
-                verified_at=datetime.now().isoformat(timespec="seconds"),
-                trial_started_at=str(result.get("trial_started_at") or ""),
-                trial_ends_at=str(result.get("trial_ends_at") or ""),
-            )
+            self.app._apply_online_license_data(result)
             self.app.refresh_all()
             self.refresh()
         self._run(action, success)
@@ -7074,11 +7075,17 @@ class PlanAndBillingDialog(tk.Toplevel):
         self._run(action, success)
 
     def choose_plan(self, plan_code: str) -> None:
+        if self.app.db.get_subscription().get("access_source") == "founder":
+            messagebox.showinfo("Founder", founder_plan_label(active_ui_language()), parent=self)
+            return
         if not self.app.require_team_permission({"owner"}, "promena paketa i plaćanje", parent=self):
             return
         self.app.open_plan_checkout(plan_code=plan_code)
 
     def choose_ai_advisor(self, addon_code: str) -> None:
+        if self.app.db.get_subscription().get("access_source") == "founder":
+            messagebox.showinfo("Founder", founder_plan_label(active_ui_language()), parent=self)
+            return
         if not self.app.require_team_permission({"owner"}, "aktivacija AI savetnika", parent=self):
             return
         self.app.open_plan_checkout(plan_code=addon_code)
@@ -7423,14 +7430,7 @@ class OnlineActivationDialog(tk.Toplevel):
             return
         email = self.email_var.get().strip().lower()
         self.app.db.save_cloud_connection(api_url=self.api_url, workspace_token=token, owner_email=email)
-        self.app.db.apply_subscription_update(
-            status=str(license_data.get("status") or "verification_pending"),
-            plan_code=str(license_data.get("plan_code") or "starter"),
-            billing_provider="opsnest_cloud",
-            verified_at=str(license_data.get("last_verified_at") or datetime.now().isoformat(timespec="seconds")),
-            trial_started_at=str(license_data.get("trial_started_at") or ""),
-            trial_ends_at=str(license_data.get("trial_ends_at") or ""),
-        )
+        self.app._apply_online_license_data(license_data)
         self.app.refresh_subscription_status_indicator()
         self.destroy()
         messagebox.showinfo(
@@ -11990,6 +11990,8 @@ class FinancialAdvisorDialog(tk.Toplevel):
         ai_panel.rowconfigure(1, weight=1)
         ai_panel.columnconfigure(0, weight=1)
         self.ai_status_var = tk.StringVar(value="AI dodaci: Starter 100, Business 200 ili Pro 300 saveta mesečno. Pokreće se samo kada ga zatražite.")
+        if self.app.db.get_subscription().get("access_source") == "founder":
+            self.ai_status_var.set(founder_plan_label(active_ui_language()) + " · AI")
         ttk.Label(ai_panel, textvariable=self.ai_status_var, style="Help.TLabel", wraplength=860).grid(row=0, column=0, sticky="w", pady=(0, 6))
         self.ai_text = tk.Text(
             ai_panel, height=8, wrap="word", background="white", foreground=TEXT,
@@ -12014,7 +12016,7 @@ class FinancialAdvisorDialog(tk.Toplevel):
         subscription = self.app.db.get_subscription()
         workspace_id = str(subscription.get("workspace_id") or "").strip()
         workspace_token = str(connection.get("workspace_token") or "").strip()
-        if not workspace_id or not workspace_token:
+        if not workspace_id or not (workspace_token or (connection.get("member_id") and connection.get("member_token"))):
             messagebox.showinfo("OpsNest AI savetnik", "Za AI savet prvo aktivirajte online OpsNest nalog iz centra za pakete.", parent=self)
             return
         language = active_ui_language()
@@ -12053,7 +12055,8 @@ class FinancialAdvisorDialog(tk.Toplevel):
         def worker() -> None:
             try:
                 client = OpsNestCloudClient(connection.get("api_url") or OPSNEST_CLOUD_API_URL)
-                results.put((True, client.financial_advice(workspace_id=workspace_id, workspace_token=workspace_token, summary=summary)))
+                results.put((True, client.financial_advice(workspace_id=workspace_id, workspace_token=workspace_token, summary=summary,
+                                                          member_id=connection.get("member_id", ""), member_token=connection.get("member_token", ""))))
             except Exception as exc:
                 results.put((False, exc))
 

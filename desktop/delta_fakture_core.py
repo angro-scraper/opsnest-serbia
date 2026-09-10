@@ -30,7 +30,7 @@ except ImportError:  # pragma: no cover - ctypes on supported Python builds incl
 
 import xml.etree.ElementTree as ET
 
-from opsnest_plans import effective_plan_code, plan_details, plan_includes, plan_limit
+from opsnest_plans import effective_plan_code, plan_details, plan_includes, plan_limit, entitlement_plan_details
 from opsnest_serbia import is_kd2010_activity_code, normalize_kd2010_code, serbia_activity_profile
 
 
@@ -1854,6 +1854,7 @@ class Database:
             "trial_started_at": "TEXT NOT NULL DEFAULT ''",
             "trial_ends_at": "TEXT NOT NULL DEFAULT ''",
             "billing_provider": "TEXT NOT NULL DEFAULT ''",
+            "access_source": "TEXT NOT NULL DEFAULT 'subscription'",
             "external_subscription_id": "TEXT NOT NULL DEFAULT ''",
             "last_verified_at": "TEXT NOT NULL DEFAULT ''",
             "cloud_api_url": "TEXT NOT NULL DEFAULT ''",
@@ -2026,6 +2027,9 @@ class Database:
         payload["days_remaining"] = days_remaining
         payload["can_write"] = effective_status in SUBSCRIPTION_WRITE_STATUSES
         payload["read_only"] = not payload["can_write"]
+        if not (payload.get("access_source") == "founder" and effective_status == "active"
+                and payload.get("billing_provider") == "opsnest_cloud" and payload.get("plan_code") == "pro"):
+            payload["access_source"] = "subscription"
         return payload
 
     def start_trial_if_needed(self) -> dict[str, Any]:
@@ -2162,7 +2166,7 @@ class Database:
         self.conn.execute(
             """
             UPDATE workspace_subscription
-            SET cloud_member_id = '', cloud_member_token = '', cloud_member_role = '', cloud_member_name = '',
+            SET cloud_member_id = '', cloud_member_token = '', cloud_member_role = '', cloud_member_name = '', access_source = 'subscription',
                 updated_at = ?
             WHERE id = 1
             """,
@@ -2184,7 +2188,7 @@ class Database:
         self.conn.execute(
             """
             UPDATE workspace_subscription
-            SET workspace_id = ?, cloud_api_url = ?, cloud_workspace_token = '', cloud_owner_email = '',
+            SET workspace_id = ?, cloud_api_url = ?, cloud_workspace_token = '', cloud_owner_email = '', access_source = 'subscription',
                 cloud_member_id = ?, cloud_member_token = ?,
                 cloud_member_role = ?, cloud_member_name = ?, cloud_sync_revision = 0,
                 cloud_sync_sha256 = '',
@@ -2291,7 +2295,7 @@ class Database:
                 sanitized.execute(
                     """
                     UPDATE workspace_subscription
-                    SET cloud_workspace_token = '', cloud_member_id = '', cloud_member_token = '',
+                    SET cloud_workspace_token = '', cloud_member_id = '', cloud_member_token = '', access_source = 'subscription',
                         cloud_member_role = '', cloud_member_name = '', cloud_sync_revision = 0,
                         cloud_sync_sha256 = '', cloud_last_sync_at = '', cloud_last_error = '', updated_at = ''
                     WHERE id = 1
@@ -2357,7 +2361,7 @@ class Database:
             "SELECT smtp_host, smtp_port, smtp_security, smtp_username, smtp_password, smtp_from_name, smtp_from_email, smtp_reply_to, login_email, login_pin_salt, login_pin_hash FROM company_settings WHERE id = 1"
         ).fetchone()
         preserved_subscription = self.conn.execute(
-            "SELECT workspace_id, cloud_api_url, cloud_workspace_token, cloud_owner_email, cloud_member_id, cloud_member_token, cloud_member_role, cloud_member_name FROM workspace_subscription WHERE id = 1"
+            "SELECT workspace_id, cloud_api_url, cloud_workspace_token, cloud_owner_email, cloud_member_id, cloud_member_token, cloud_member_role, cloud_member_name, access_source FROM workspace_subscription WHERE id = 1"
         ).fetchone()
         self._maybe_backup("pre_team_sync")
         temp_handle = tempfile.NamedTemporaryFile(prefix="opsnest_received_sync_", suffix=".db", delete=False)
@@ -2403,7 +2407,7 @@ class Database:
                     """
                     UPDATE workspace_subscription
                     SET workspace_id = ?, cloud_api_url = ?, cloud_workspace_token = ?, cloud_owner_email = ?,
-                        cloud_member_id = ?, cloud_member_token = ?, cloud_member_role = ?, cloud_member_name = ?
+                        cloud_member_id = ?, cloud_member_token = ?, cloud_member_role = ?, cloud_member_name = ?, access_source = ?
                     WHERE id = 1
                     """,
                     tuple(preserved_subscription),
@@ -2428,6 +2432,7 @@ class Database:
         status: str,
         plan_code: str,
         billing_provider: str = "",
+        access_source: str = "subscription",
         external_subscription_id: str = "",
         verified_at: str | None = None,
         trial_started_at: str | None = None,
@@ -2443,10 +2448,12 @@ class Database:
         if normalized_status not in {"verification_pending", "trial", "active", "past_due", "suspended", "cancelled", "expired", "legacy"}:
             raise ValueError("Nepoznat status pretplate.")
         normalized_plan = str(plan_code or "starter").strip().lower() or "starter"
+        confirmed_source = "founder" if (access_source == "founder" and billing_provider == "opsnest_cloud"
+                                          and normalized_status == "active" and normalized_plan == "pro") else "subscription"
         self.conn.execute(
             """
             UPDATE workspace_subscription
-            SET status = ?, plan_code = ?, billing_provider = ?,
+            SET status = ?, plan_code = ?, billing_provider = ?, access_source = ?,
                 external_subscription_id = ?, last_verified_at = ?,
                 trial_started_at = COALESCE(NULLIF(?, ''), trial_started_at),
                 trial_ends_at = COALESCE(NULLIF(?, ''), trial_ends_at),
@@ -2457,6 +2464,7 @@ class Database:
                 normalized_status,
                 normalized_plan,
                 str(billing_provider or "").strip(),
+                confirmed_source,
                 str(external_subscription_id or "").strip(),
                 str(verified_at or now_iso()).strip(),
                 str(trial_started_at or "").strip(),
@@ -2496,7 +2504,7 @@ class Database:
             "subscription": subscription,
             "purchased_code": purchased_code,
             "effective_code": effective_code,
-            "details": plan_details(effective_code),
+            "details": entitlement_plan_details(effective_code, subscription.get("access_source")),
         }
 
     def plan_usage(self) -> dict[str, Any]:
@@ -2541,10 +2549,7 @@ class Database:
             "team_members": team_members,
             "team_seats_used": team_seats_used,
             "limits": {
-                "projects": plan_limit(plan["effective_code"], "projects"),
-                "issued_invoices_per_month": plan_limit(plan["effective_code"], "issued_invoices_per_month"),
-                "pdf_imports_per_month": plan_limit(plan["effective_code"], "pdf_imports_per_month"),
-                "seats": plan_limit(plan["effective_code"], "seats"),
+                key: plan["details"][key] for key in ("projects", "issued_invoices_per_month", "pdf_imports_per_month", "seats")
             },
         }
 

@@ -81,6 +81,7 @@ from .security import (
 from .services import (
     consume_ai_advisor_request,
     effective_license,
+    is_founder_workspace,
     get_paypal_subscription,
     paypal_access_token,
     send_team_invitation,
@@ -958,9 +959,9 @@ def _ensure_owner_member(db: Session, workspace: Workspace) -> WorkspaceMember:
     return member
 
 
-def _team_seat_limit(workspace: Workspace) -> int:
+def _team_seat_limit(workspace: Workspace) -> int | None:
     license_data = effective_license(workspace)
-    return int(plan_details(license_data["effective_plan_code"])["seats"])
+    return license_data["limits"]["seats"]
 
 
 def _team_seats_used(db: Session, workspace_id: str) -> int:
@@ -1461,7 +1462,7 @@ def ai_financial_advice(
     ai_license = dict(license_data.get("ai_advisor") or {})
     if not bool(ai_license.get("enabled")):
         raise HTTPException(status_code=403, detail="AI financial adviser requires the AI Adviser add-on.")
-    if int(ai_license.get("requests_remaining") or 0) <= 0:
+    if not ai_license.get("unlimited") and int(ai_license.get("requests_remaining") or 0) <= 0:
         raise HTTPException(status_code=429, detail="Your AI Adviser monthly limit has been reached. It renews with the next billing period.")
     _limit_ai_advice(workspace.id)
     advice = _generate_ai_financial_advice(payload)
@@ -1482,6 +1483,16 @@ def ai_financial_advice(
         "generated_at": utc_now().isoformat(timespec="seconds") + "Z",
         "requests_remaining": remaining,
     }
+
+
+@app.post("/v1/team/ai/financial-advice")
+def team_ai_financial_advice(
+    payload: FinancialAdviceRequest,
+    context: MemberContext = Depends(_member_dependency),
+    db: Session = Depends(get_session),
+) -> dict[str, Any]:
+    _require_team_role(context, "owner")
+    return ai_financial_advice(payload, context.workspace, db)
 
 
 @app.post("/v1/team/owner-account")
@@ -1620,7 +1631,8 @@ def invite_team_member(
         )
         .order_by(TeamInvitation.created_at.desc())
     ).all()
-    if not existing and not pending and _team_seats_used(db, workspace.id) >= _team_seat_limit(workspace):
+    seat_limit = _team_seat_limit(workspace)
+    if seat_limit is not None and not existing and not pending and _team_seats_used(db, workspace.id) >= seat_limit:
         raise HTTPException(status_code=409, detail="All team seats in this package are already used. Upgrade the package to invite another person.")
     # A reissued invitation must supersede every earlier code for the same
     # recipient. Leaving older valid codes in circulation would make revoking
@@ -2711,6 +2723,8 @@ def create_checkout_session(plan_code: str, workspace: Workspace = Depends(_work
     plan = plan_code.lower().strip()
     if plan not in PLAN_CATALOG and plan not in AI_ADVISOR_ADDONS:
         raise HTTPException(status_code=422, detail="Unknown plan.")
+    if is_founder_workspace(workspace):
+        raise HTTPException(status_code=409, detail="Founder access has no package limits and needs no paid upgrade.")
     if not settings.paypal_plan_ids.get(plan) or not settings.paypal_client_id:
         raise HTTPException(status_code=503, detail="PayPal plans are not configured yet.")
     session = sign_checkout_session(workspace.id, plan)

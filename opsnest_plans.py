@@ -143,6 +143,22 @@ def plan_limit(plan_code: object, key: str) -> int | None:
     return int(value) if isinstance(value, int) else None
 
 
+def entitlement_plan_details(plan_code: object, access_source: object = "subscription") -> dict[str, Any]:
+    """Apply a server-confirmed internal entitlement, never a purchasable plan."""
+    founder = access_source == "founder"
+    details = plan_details("pro" if founder else plan_code)
+    if founder:
+        details.update(name="Founder", price_eur="0.00", seats=None, projects=None,
+                       issued_invoices_per_month=None, pdf_imports_per_month=None)
+    return details
+
+
+def founder_plan_label(language: str = "sr") -> str:
+    return {"sr": "Founder — bez paketnih ograničenja", "en": "Founder — no package limits",
+            "bg": "Founder — без пакетни ограничения", "de": "Founder — ohne Paketlimits",
+            "ru": "Founder — без ограничений тарифа"}.get(language, "Founder — no package limits")
+
+
 def plan_includes(plan_code: object, feature: str) -> bool:
     return feature in set(plan_details(plan_code).get("features") or set())
 

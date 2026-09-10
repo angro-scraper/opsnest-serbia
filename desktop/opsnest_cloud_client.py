@@ -53,13 +53,15 @@ class OpsNestCloudClient:
         workspace_id: str,
         workspace_token: str,
         summary: dict[str, Any],
+        member_id: str = "",
+        member_token: str = "",
     ) -> dict[str, Any]:
         """Request Pro AI advice from the cloud without exposing an API key."""
         return self._request(
-            "/v1/ai/financial-advice",
+            "/v1/ai/financial-advice" if workspace_token else "/v1/team/ai/financial-advice",
             method="POST",
             payload=summary,
-            headers=self._workspace_headers(workspace_id, workspace_token),
+            headers=self._workspace_headers(workspace_id, workspace_token) if workspace_token else self._member_headers(workspace_id, member_id, member_token),
         )
 
     @staticmethod

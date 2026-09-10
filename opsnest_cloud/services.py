@@ -15,16 +15,16 @@ from fastapi import HTTPException
 from .config import settings
 from .database import Workspace
 from .time_utils import utc_now
-from opsnest_plans import AI_ADVISOR_ADDONS, TRIAL_DAYS, effective_plan_code, normalize_plan_code, plan_details
+from opsnest_plans import AI_ADVISOR_ADDONS, TRIAL_DAYS, effective_plan_code, normalize_plan_code, plan_details, entitlement_plan_details
 
 
 PAYPAL_WRITE_STATUSES = {"trial", "active"}
 
 
 def is_founder_workspace(workspace: Workspace) -> bool:
-    """Grant the product owner permanent Pro access through server configuration only."""
+    """Grant verified internal workspaces uncapped package access from server config."""
     owner_email = str(workspace.owner_email or "").strip().lower()
-    return bool(owner_email and owner_email in settings.founder_workspace_emails)
+    return bool(workspace.email_verified_at and owner_email and owner_email in settings.founder_workspace_emails)
 
 
 def effective_license(workspace: Workspace, *, now: datetime | None = None) -> dict[str, Any]:
@@ -50,12 +50,16 @@ def effective_license(workspace: Workspace, *, now: datetime | None = None) -> d
     used = max(0, int(workspace.ai_advisor_requests_used or 0)) if ai_enabled else 0
     if period_started and period_started <= reference - timedelta(days=30):
         used = 0
-    monthly_limit = int(ai_tier["monthly_requests"]) if ai_tier else 0
+    monthly_limit = None if founder_access else int(ai_tier["monthly_requests"]) if ai_tier else 0
+    details = entitlement_plan_details("pro" if founder_access else effective_plan_code(status, plan_code),
+                                       "founder" if founder_access else "subscription")
     return {
         "workspace_id": workspace.id,
         "plan_code": plan_code,
         "effective_plan_code": "pro" if founder_access else effective_plan_code(status, plan_code),
-        "plan_name": plan_details(plan_code)["name"],
+        "plan_name": "Founder" if founder_access else plan_details(plan_code)["name"],
+        "limits": {key: details[key] for key in ("seats", "projects", "issued_invoices_per_month", "pdf_imports_per_month")},
+        "package_unlimited": founder_access,
         "status": status,
         "can_write": founder_access or status in PAYPAL_WRITE_STATUSES,
         "access_source": "founder" if founder_access else "subscription",
@@ -67,17 +71,18 @@ def effective_license(workspace: Workspace, *, now: datetime | None = None) -> d
             "enabled": ai_enabled,
             "status": "active" if ai_enabled else str(workspace.ai_advisor_status or "disabled").lower(),
             "tier_code": ai_tier_code,
-            "tier_name": str(ai_tier["name"]) if ai_tier else "",
-            "price_eur": str(ai_tier["price_eur"]) if ai_tier else "",
+            "tier_name": "Founder AI" if founder_access else str(ai_tier["name"]) if ai_tier else "",
+            "price_eur": "0.00" if founder_access else str(ai_tier["price_eur"]) if ai_tier else "",
+            "unlimited": founder_access,
             "monthly_requests": monthly_limit,
             "requests_used": used,
-            "requests_remaining": max(0, monthly_limit - used) if ai_enabled else 0,
+            "requests_remaining": None if founder_access else max(0, monthly_limit - used) if ai_enabled else 0,
             "period_started_at": period_started.isoformat() if period_started else "",
         },
     }
 
 
-def consume_ai_advisor_request(workspace: Workspace, *, now: datetime | None = None) -> int:
+def consume_ai_advisor_request(workspace: Workspace, *, now: datetime | None = None) -> int | None:
     """Consume one included request after a successful response is generated."""
     reference = now or utc_now()
     tier = AI_ADVISOR_ADDONS.get("ai_pro" if is_founder_workspace(workspace) else str(workspace.ai_advisor_tier or "").lower())
@@ -88,10 +93,11 @@ def consume_ai_advisor_request(workspace: Workspace, *, now: datetime | None = N
         workspace.ai_advisor_period_started_at = reference
         workspace.ai_advisor_requests_used = 0
     limit = int(tier["monthly_requests"])
-    if int(workspace.ai_advisor_requests_used or 0) >= limit:
+    founder_access = is_founder_workspace(workspace)
+    if not founder_access and int(workspace.ai_advisor_requests_used or 0) >= limit:
         raise HTTPException(status_code=429, detail="Your AI Adviser monthly limit has been reached. It renews with the next billing period.")
     workspace.ai_advisor_requests_used = int(workspace.ai_advisor_requests_used or 0) + 1
-    return max(0, limit - int(workspace.ai_advisor_requests_used))
+    return None if founder_access else max(0, limit - int(workspace.ai_advisor_requests_used))
 
 
 def start_trial(workspace: Workspace) -> None:

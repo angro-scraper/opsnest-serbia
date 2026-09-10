@@ -15,6 +15,24 @@ function portal(t){
   return w;
 }
 function setLanguage(w,language){const select=w.document.getElementById('language');select.value=language;select.dispatchEvent(new w.Event('change'));}
+test('Founder has localized unlimited seats; ordinary Pro still shows 20',t=>{
+  const w=portal(t),d=w.document;
+  const data={member:{id:'owner',role_label:'Owner'},team:{can_manage:true,seats_used:1001,seat_limit:null},
+    workspace:{company_name:'QA',country_code:'BG',country_label:'Bulgaria',country_pack_stage:'foundation',default_currency:'EUR',business_profile:'general'},
+    sync:{enabled:false},modules:[],license:{access_source:'founder',effective_plan_code:'pro',plan_name:'Founder'}};
+  w.showApp(data);
+  for(const [lang,expected] of [['sr','Neograničeno'],['bg','Неограничено'],['en','Unlimited'],['sr','Neograničeno']]){
+    setLanguage(w,lang);
+    assert.match(d.getElementById('metrics').textContent,/Founder/);
+    assert.ok(d.getElementById('metrics').textContent.includes(expected));
+    assert.doesNotMatch(d.getElementById('metrics').textContent,/null|undefined|1001 \/ 20/);
+  }
+  data.license={access_source:'subscription',plan_name:'Pro',effective_plan_code:'pro'};
+  data.team.seats_used=1;data.team.seat_limit=20;
+  w.showApp(data);
+  assert.match(d.getElementById('metrics').textContent,/1 \/ 20/);
+  assert.doesNotMatch(d.getElementById('metrics').textContent,/Founder|Neograničeno/);
+});
 test('language changes preserve unsaved input, stable codes and reset navigation',t=>{
   const w=portal(t),d=w.document;
   d.getElementById('email').value='qa@example.test';
