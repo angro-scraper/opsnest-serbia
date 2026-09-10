@@ -584,7 +584,7 @@ class CriticalWorkflowTests(unittest.TestCase):
 
         self.assertEqual(default_document_language_for_country("RS"), "sr")
         self.assertEqual(default_document_language_for_country("BG"), "bg")
-        self.assertEqual(default_document_language_for_country("DE"), "de")
+        self.assertEqual(default_document_language_for_country("DE"), "en")
         self.assertEqual(default_document_language_for_country("HR"), "en")
         summary = company_automation_summary("RS", "6201")
         self.assertIn("Digitalne i kreativne usluge", summary)

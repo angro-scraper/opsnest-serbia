@@ -1,0 +1,6 @@
+{
+  "name": "opsnest-portal-regression",
+  "private": true,
+  "scripts": {"test": "node --test workspace_portal.test.cjs"},
+  "devDependencies": {"jsdom": "26.1.0"}
+}

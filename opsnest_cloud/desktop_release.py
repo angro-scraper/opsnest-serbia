@@ -1,4 +1,4 @@
-"""Public, signed metadata for the current Windows desktop release.
+"""Public integrity metadata for the current Windows desktop release.
 
 The values are deliberately public: the desktop client still verifies the
 SHA-256 digest before it ever starts an installer. Environment variables can
@@ -35,6 +35,7 @@ def _is_trusted_installer_url(value: str, expected_filename: str) -> bool:
     return (
         parsed.scheme == "https"
         and (parsed.hostname or "").lower() in _TRUSTED_DOWNLOAD_HOSTS
+        and parsed.netloc.lower() in _TRUSTED_DOWNLOAD_HOSTS
         and parsed.path == f"/downloads/{expected_filename}"
         and not parsed.params
         and not parsed.query
@@ -43,7 +44,7 @@ def _is_trusted_installer_url(value: str, expected_filename: str) -> bool:
 
 
 def current_desktop_release(version: str, installer_url: str, sha256: str) -> dict[str, str]:
-    """Prefer complete hosting metadata, otherwise return the signed release manifest."""
+    """Prefer complete hosting metadata, otherwise return the pinned release manifest."""
     normalized_hash = (sha256 or "").strip().lower()
     normalized_url = (installer_url or "").strip()
     normalized_version = (version or FALLBACK_RELEASE["latest_version"]).strip()

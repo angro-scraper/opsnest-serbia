@@ -37,6 +37,7 @@ from delta_fakture_core import (
     LOGO_FILE,
     TEMPLATE_XLSX,
     calculate_invoice_totals,
+    decimal_from,
     format_currency,
     format_date,
     money_round,
@@ -184,10 +185,10 @@ def _translated_payment_method(value: Any, language: str) -> str:
         "kompenzacija": "offset", "offset": "offset", "прихващане": "offset",
     }.get(source.casefold())
     translated = {
-        "bank": {"sr": "Banka", "bg": "Банков превод", "en": "Bank transfer"},
-        "cash": {"sr": "Gotovina", "bg": "В брой", "en": "Cash"},
-        "card": {"sr": "Kartica", "bg": "Карта", "en": "Card"},
-        "offset": {"sr": "Kompenzacija", "bg": "Прихващане", "en": "Set-off"},
+        "bank": {"sr": "Banka", "bg": "Банков превод", "en": "Bank transfer", "de": "Überweisung", "ru": "Банковский перевод"},
+        "cash": {"sr": "Gotovina", "bg": "В брой", "en": "Cash", "de": "Barzahlung", "ru": "Наличные"},
+        "card": {"sr": "Kartica", "bg": "Карта", "en": "Card", "de": "Karte", "ru": "Карта"},
+        "offset": {"sr": "Kompenzacija", "bg": "Прихващане", "en": "Set-off", "de": "Verrechnung", "ru": "Взаимозачет"},
     }
     return translated.get(canonical or "", {}).get(language, source)
 
@@ -258,29 +259,29 @@ REPORT_TEXT: dict[str, dict[str, str]] = {
         "net_base": "Osnovica bez PDV-a", "net_amount": "Osnovica / iznos", "vat": "PDV", "total": "Ukupno", "summary": "Pregled",
         "output_vat": "Izlazni PDV", "input_vat": "Ulazni PDV", "vat_payable": "PDV za uplatu / pretplatu", "output_ledger": "Izlazni PDV", "input_ledger": "Ulazni PDV",
         "outgoing_invoices": "Izlazne fakture", "incoming_bills": "Ulazni računi / troškovi", "payments": "Uplate", "refunds": "Povraćaji", "collected": "Naplaćeno", "payments_refunds": "Uplate i povraćaji", "credit_cancellations": "Odobrenja i storna",
-        "control": "Kontrola", "control_title": "KONTROLA PRE IZVOZA ZA KNJIGOVOĐU", "foreign_currency": "Stavke van EUR", "missing_date": "Stavke bez datuma", "currency": "Valuta", "number": "Broj", "none": "Nema", "empty_period": "Nema stavki u izabranom periodu.",
+        "control": "Kontrola", "control_title": "KONTROLA PRE IZVOZA ZA KNJIGOVOĐU", "foreign_currency": "Stavke u drugim valutama", "missing_date": "Stavke bez datuma", "currency": "Valuta", "number": "Broj", "none": "Nema", "empty_period": "Nema stavki u izabranom periodu.",
         "issued_invoice": "Izdana faktura", "incoming_bill": "Ulazni račun", "outgoing_bill": "Izlazni račun", "credit_note": "Kreditno odobrenje", "cancelled_invoice": "Stornirana faktura", "payment": "Uplata", "refund": "Povraćaj uplate",
         "vat_working_note": "Ovo je radna evidencija za proveru sa knjigovođom. Nije XML fajl niti direktna prijava za NRA. Izdane fakture, kreditna odobrenja i ulazni računi su detaljno prikazani na zasebnim listovima.",
-        "vat_control_warning": "Kontrola: {foreign} stavki van EUR i {missing} stavki bez datuma nisu uključene u zbir PDV-a. Proverite list '{control}' u Excel kopiji pre knjiženja.",
-        "accountant_control_warning": "Kontrola: {foreign} stavki van EUR i {missing} stavki bez datuma nisu uključene u PDV zbir. Detalji su na listu '{control}' u Excel kopiji.",
+        "vat_control_warning": "Kontrola: {foreign} stavki u drugim valutama i {missing} stavki bez datuma nisu uključene u zbir PDV-a. Proverite list '{control}' u Excel kopiji pre knjiženja.",
+        "accountant_control_warning": "Kontrola: {foreign} stavki u drugim valutama i {missing} stavki bez datuma nisu uključene u PDV zbir. Detalji su na listu '{control}' u Excel kopiji.",
         "vat_footer": "OpsNest - PDV evidencija projekta za internu proveru i knjigovođu", "accountant_footer": "OpsNest - kompletan izvoz projekta za knjigovođu", "page": "Strana",
         "sheet_summary": "Sažetak", "sheet_output": "Izlazni PDV", "sheet_input": "Ulazni PDV", "sheet_control": "Kontrola", "sheet_outgoing": "Izlazne fakture", "sheet_incoming": "Ulazni računi", "sheet_payments": "Uplate i povraćaji", "sheet_corrections": "Odobrenja i storna", "sheet_vat": "PDV pregled",
     },
     "en": {
         "vat_file": "VAT_ledger", "accountant_file": "accountant_export", "vat_title": "PROJECT VAT LEDGER", "vat_subtitle": "Working export for the accountant - not an XML file or a direct NRA filing", "accountant_title": "PROJECT EXPORT FOR ACCOUNTING", "accountant_note": "Working package for the accountant: review outgoing and incoming bills, payments/refunds, VAT, credit notes and cancellations before posting. This is not a direct NRA XML export.",
-        "company": "Company", "project": "Project", "site": "Site", "period": "Period", "generated": "Generated", "date": "Date", "type": "Type", "document_type": "Document type", "document_number": "Document number", "invoice": "Invoice", "customer": "Customer", "partner": "Partner", "partner_vat": "Partner VAT number", "description": "Description", "payment_method_note": "Method / note", "net_base": "Net amount", "net_amount": "Net amount", "vat": "VAT", "total": "Total", "summary": "Overview", "output_vat": "Output VAT", "input_vat": "Input VAT", "vat_payable": "VAT payable / refundable", "output_ledger": "Output VAT", "input_ledger": "Input VAT", "outgoing_invoices": "Outgoing invoices", "incoming_bills": "Incoming bills / costs", "payments": "Payments", "refunds": "Refunds", "collected": "Collected", "payments_refunds": "Payments and refunds", "credit_cancellations": "Credit notes and cancellations", "control": "Control", "control_title": "PRE-EXPORT CONTROL FOR ACCOUNTING", "foreign_currency": "Non-EUR items", "missing_date": "Items without date", "currency": "Currency", "number": "Number", "none": "None", "empty_period": "No items in the selected period.", "issued_invoice": "Issued invoice", "incoming_bill": "Incoming bill", "outgoing_bill": "Outgoing bill", "credit_note": "Credit note", "cancelled_invoice": "Cancelled invoice", "payment": "Payment", "refund": "Payment refund", "vat_working_note": "This is a working ledger for review with the accountant. It is not an XML file or a direct NRA filing. Issued invoices, credit notes and incoming bills are detailed on separate sheets.", "vat_control_warning": "Control: {foreign} non-EUR items and {missing} items without a date are excluded from VAT totals. Review the '{control}' sheet in the Excel copy before posting.", "accountant_control_warning": "Control: {foreign} non-EUR items and {missing} items without a date are excluded from VAT totals. Details are on the '{control}' sheet in the Excel copy.", "vat_footer": "OpsNest - project VAT ledger for internal review and accounting", "accountant_footer": "OpsNest - complete project export for accounting", "page": "Page", "sheet_summary": "Summary", "sheet_output": "Output VAT", "sheet_input": "Input VAT", "sheet_control": "Control", "sheet_outgoing": "Outgoing invoices", "sheet_incoming": "Incoming bills", "sheet_payments": "Payments and refunds", "sheet_corrections": "Credit notes and cancellations", "sheet_vat": "VAT overview",
+        "company": "Company", "project": "Project", "site": "Site", "period": "Period", "generated": "Generated", "date": "Date", "type": "Type", "document_type": "Document type", "document_number": "Document number", "invoice": "Invoice", "customer": "Customer", "partner": "Partner", "partner_vat": "Partner VAT number", "description": "Description", "payment_method_note": "Method / note", "net_base": "Net amount", "net_amount": "Net amount", "vat": "VAT", "total": "Total", "summary": "Overview", "output_vat": "Output VAT", "input_vat": "Input VAT", "vat_payable": "VAT payable / refundable", "output_ledger": "Output VAT", "input_ledger": "Input VAT", "outgoing_invoices": "Outgoing invoices", "incoming_bills": "Incoming bills / costs", "payments": "Payments", "refunds": "Refunds", "collected": "Collected", "payments_refunds": "Payments and refunds", "credit_cancellations": "Credit notes and cancellations", "control": "Control", "control_title": "PRE-EXPORT CONTROL FOR ACCOUNTING", "foreign_currency": "Items in other currencies", "missing_date": "Items without date", "currency": "Currency", "number": "Number", "none": "None", "empty_period": "No items in the selected period.", "issued_invoice": "Issued invoice", "incoming_bill": "Incoming bill", "outgoing_bill": "Outgoing bill", "credit_note": "Credit note", "cancelled_invoice": "Cancelled invoice", "payment": "Payment", "refund": "Payment refund", "vat_working_note": "This is a working ledger for review with the accountant. It is not an XML file or a direct NRA filing. Issued invoices, credit notes and incoming bills are detailed on separate sheets.", "vat_control_warning": "Control: {foreign} items in other currencies and {missing} items without a date are excluded from VAT totals. Review the '{control}' sheet in the Excel copy before posting.", "accountant_control_warning": "Control: {foreign} items in other currencies and {missing} items without a date are excluded from VAT totals. Details are on the '{control}' sheet in the Excel copy.", "vat_footer": "OpsNest - project VAT ledger for internal review and accounting", "accountant_footer": "OpsNest - complete project export for accounting", "page": "Page", "sheet_summary": "Summary", "sheet_output": "Output VAT", "sheet_input": "Input VAT", "sheet_control": "Control", "sheet_outgoing": "Outgoing invoices", "sheet_incoming": "Incoming bills", "sheet_payments": "Payments and refunds", "sheet_corrections": "Credit notes and cancellations", "sheet_vat": "VAT overview",
     },
     "de": {
         "vat_file": "USt_Uebersicht", "accountant_file": "Buchhaltungsexport", "vat_title": "UST-ÜBERSICHT DES PROJEKTS", "vat_subtitle": "Arbeitsauszug für die Buchhaltung - keine XML-Datei und keine direkte NRA-Meldung", "accountant_title": "PROJEKTEXPORT FÜR DIE BUCHHALTUNG", "accountant_note": "Arbeitspaket für die Buchhaltung: Ausgangs- und Eingangsrechnungen, Zahlungen/Erstattungen, USt., Gutschriften und Stornierungen vor der Buchung prüfen. Dies ist kein direkter NRA-XML-Export.",
-        "company": "Firma", "project": "Projekt", "site": "Baustelle", "period": "Zeitraum", "generated": "Erstellt", "date": "Datum", "type": "Typ", "document_type": "Dokumenttyp", "document_number": "Dokumentnummer", "invoice": "Rechnung", "customer": "Kunde", "partner": "Partner", "partner_vat": "USt-IdNr. Partner", "description": "Beschreibung", "payment_method_note": "Zahlungsart / Hinweis", "net_base": "Nettobetrag", "net_amount": "Nettobetrag", "vat": "USt.", "total": "Gesamt", "summary": "Übersicht", "output_vat": "Ausgangs-USt.", "input_vat": "Vorsteuer", "vat_payable": "USt.-Zahllast / Erstattung", "output_ledger": "Ausgangs-USt.", "input_ledger": "Vorsteuer", "outgoing_invoices": "Ausgangsrechnungen", "incoming_bills": "Eingangsrechnungen / Kosten", "payments": "Zahlungen", "refunds": "Erstattungen", "collected": "Eingezogen", "payments_refunds": "Zahlungen und Erstattungen", "credit_cancellations": "Gutschriften und Stornierungen", "control": "Kontrolle", "control_title": "KONTROLLE VOR BUCHHALTUNGSEXPORT", "foreign_currency": "Posten außerhalb EUR", "missing_date": "Posten ohne Datum", "currency": "Währung", "number": "Nummer", "none": "Keine", "empty_period": "Keine Posten im ausgewählten Zeitraum.", "issued_invoice": "Ausgestellte Rechnung", "incoming_bill": "Eingangsrechnung", "outgoing_bill": "Ausgangsrechnung", "credit_note": "Gutschrift", "cancelled_invoice": "Stornierte Rechnung", "payment": "Zahlung", "refund": "Zahlungserstattung", "vat_working_note": "Dies ist eine Arbeitsübersicht zur Prüfung mit der Buchhaltung. Sie ist keine XML-Datei und keine direkte NRA-Meldung. Ausgestellte Rechnungen, Gutschriften und Eingangsrechnungen sind auf separaten Blättern aufgeführt.", "vat_control_warning": "Kontrolle: {foreign} Posten außerhalb EUR und {missing} Posten ohne Datum sind nicht in den USt.-Summen enthalten. Vor der Buchung das Blatt '{control}' in der Excel-Kopie prüfen.", "accountant_control_warning": "Kontrolle: {foreign} Posten außerhalb EUR und {missing} Posten ohne Datum sind nicht in den USt.-Summen enthalten. Details stehen auf dem Blatt '{control}' in der Excel-Kopie.", "vat_footer": "OpsNest - USt.-Übersicht des Projekts für interne Prüfung und Buchhaltung", "accountant_footer": "OpsNest - vollständiger Projektexport für die Buchhaltung", "page": "Seite", "sheet_summary": "Zusammenfassung", "sheet_output": "Ausgangs-USt.", "sheet_input": "Vorsteuer", "sheet_control": "Kontrolle", "sheet_outgoing": "Ausgangsrechnungen", "sheet_incoming": "Eingangsrechnungen", "sheet_payments": "Zahlungen und Erstattungen", "sheet_corrections": "Gutschriften und Stornierungen", "sheet_vat": "USt.-Übersicht",
+        "company": "Firma", "project": "Projekt", "site": "Baustelle", "period": "Zeitraum", "generated": "Erstellt", "date": "Datum", "type": "Typ", "document_type": "Dokumenttyp", "document_number": "Dokumentnummer", "invoice": "Rechnung", "customer": "Kunde", "partner": "Partner", "partner_vat": "USt-IdNr. Partner", "description": "Beschreibung", "payment_method_note": "Zahlungsart / Hinweis", "net_base": "Nettobetrag", "net_amount": "Nettobetrag", "vat": "USt.", "total": "Gesamt", "summary": "Übersicht", "output_vat": "Ausgangs-USt.", "input_vat": "Vorsteuer", "vat_payable": "USt.-Zahllast / Erstattung", "output_ledger": "Ausgangs-USt.", "input_ledger": "Vorsteuer", "outgoing_invoices": "Ausgangsrechnungen", "incoming_bills": "Eingangsrechnungen / Kosten", "payments": "Zahlungen", "refunds": "Erstattungen", "collected": "Eingezogen", "payments_refunds": "Zahlungen und Erstattungen", "credit_cancellations": "Gutschriften und Stornierungen", "control": "Kontrolle", "control_title": "KONTROLLE VOR BUCHHALTUNGSEXPORT", "foreign_currency": "Posten in anderen Währungen", "missing_date": "Posten ohne Datum", "currency": "Währung", "number": "Nummer", "none": "Keine", "empty_period": "Keine Posten im ausgewählten Zeitraum.", "issued_invoice": "Ausgestellte Rechnung", "incoming_bill": "Eingangsrechnung", "outgoing_bill": "Ausgangsrechnung", "credit_note": "Gutschrift", "cancelled_invoice": "Stornierte Rechnung", "payment": "Zahlung", "refund": "Zahlungserstattung", "vat_working_note": "Dies ist eine Arbeitsübersicht zur Prüfung mit der Buchhaltung. Sie ist keine XML-Datei und keine direkte NRA-Meldung. Ausgestellte Rechnungen, Gutschriften und Eingangsrechnungen sind auf separaten Blättern aufgeführt.", "vat_control_warning": "Kontrolle: {foreign} Posten in anderen Währungen und {missing} Posten ohne Datum sind nicht in den USt.-Summen enthalten. Vor der Buchung das Blatt '{control}' in der Excel-Kopie prüfen.", "accountant_control_warning": "Kontrolle: {foreign} Posten in anderen Währungen und {missing} Posten ohne Datum sind nicht in den USt.-Summen enthalten. Details stehen auf dem Blatt '{control}' in der Excel-Kopie.", "vat_footer": "OpsNest - USt.-Übersicht des Projekts für interne Prüfung und Buchhaltung", "accountant_footer": "OpsNest - vollständiger Projektexport für die Buchhaltung", "page": "Seite", "sheet_summary": "Zusammenfassung", "sheet_output": "Ausgangs-USt.", "sheet_input": "Vorsteuer", "sheet_control": "Kontrolle", "sheet_outgoing": "Ausgangsrechnungen", "sheet_incoming": "Eingangsrechnungen", "sheet_payments": "Zahlungen und Erstattungen", "sheet_corrections": "Gutschriften und Stornierungen", "sheet_vat": "USt.-Übersicht",
     },
     "bg": {
         "vat_file": "DDS_spravka", "accountant_file": "iznos_za_schetovodstvo", "vat_title": "ДДС СПРАВКА НА ПРОЕКТА", "vat_subtitle": "Работен износ за счетоводителя - не е XML файл или директна декларация към NRA", "accountant_title": "ИЗНОС НА ПРОЕКТА ЗА СЧЕТОВОДСТВОТО", "accountant_note": "Работен пакет за счетоводителя: проверете изходящи и входящи фактури, плащания/възстановявания, ДДС, кредитни известия и сторна преди осчетоводяване. Това не е директен NRA XML износ.",
-        "company": "Фирма", "project": "Проект", "site": "Обект", "period": "Период", "generated": "Генерирано", "date": "Дата", "type": "Тип", "document_type": "Тип документ", "document_number": "Номер на документ", "invoice": "Фактура", "customer": "Клиент", "partner": "Партньор", "partner_vat": "ДДС номер на партньора", "description": "Описание", "payment_method_note": "Начин / бележка", "net_base": "Данъчна основа", "net_amount": "Сума без ДДС", "vat": "ДДС", "total": "Общо", "summary": "Преглед", "output_vat": "Изходящ ДДС", "input_vat": "Входящ ДДС", "vat_payable": "ДДС за плащане / възстановяване", "output_ledger": "Изходящ ДДС", "input_ledger": "Входящ ДДС", "outgoing_invoices": "Изходящи фактури", "incoming_bills": "Входящи фактури / разходи", "payments": "Плащания", "refunds": "Възстановявания", "collected": "Получено", "payments_refunds": "Плащания и възстановявания", "credit_cancellations": "Кредитни известия и сторна", "control": "Контрол", "control_title": "КОНТРОЛ ПРЕДИ ИЗНОС ЗА СЧЕТОВОДСТВО", "foreign_currency": "Позиции извън EUR", "missing_date": "Позиции без дата", "currency": "Валута", "number": "Номер", "none": "Няма", "empty_period": "Няма позиции за избрания период.", "issued_invoice": "Издадена фактура", "incoming_bill": "Входяща фактура", "outgoing_bill": "Изходяща фактура", "credit_note": "Кредитно известие", "cancelled_invoice": "Сторнирана фактура", "payment": "Плащане", "refund": "Възстановяване на плащане", "vat_working_note": "Това е работна справка за проверка със счетоводителя. Не е XML файл или директна декларация към NRA. Издадените фактури, кредитните известия и входящите фактури са на отделни листове.", "vat_control_warning": "Контрол: {foreign} позиции извън EUR и {missing} позиции без дата не са включени в сумите за ДДС. Проверете листа '{control}' в Excel копието преди осчетоводяване.", "accountant_control_warning": "Контрол: {foreign} позиции извън EUR и {missing} позиции без дата не са включени в сумите за ДДС. Детайлите са в листа '{control}' в Excel копието.", "vat_footer": "OpsNest - ДДС справка на проекта за вътрешна проверка и счетоводство", "accountant_footer": "OpsNest - пълен износ на проекта за счетоводството", "page": "Страница", "sheet_summary": "Обобщение", "sheet_output": "Изходящ ДДС", "sheet_input": "Входящ ДДС", "sheet_control": "Контрол", "sheet_outgoing": "Изходящи фактури", "sheet_incoming": "Входящи фактури", "sheet_payments": "Плащания и възстановявания", "sheet_corrections": "Кредитни известия и сторна", "sheet_vat": "ДДС преглед",
+        "company": "Фирма", "project": "Проект", "site": "Обект", "period": "Период", "generated": "Генерирано", "date": "Дата", "type": "Тип", "document_type": "Тип документ", "document_number": "Номер на документ", "invoice": "Фактура", "customer": "Клиент", "partner": "Партньор", "partner_vat": "ДДС номер на партньора", "description": "Описание", "payment_method_note": "Начин / бележка", "net_base": "Данъчна основа", "net_amount": "Сума без ДДС", "vat": "ДДС", "total": "Общо", "summary": "Преглед", "output_vat": "Изходящ ДДС", "input_vat": "Входящ ДДС", "vat_payable": "ДДС за плащане / възстановяване", "output_ledger": "Изходящ ДДС", "input_ledger": "Входящ ДДС", "outgoing_invoices": "Изходящи фактури", "incoming_bills": "Входящи фактури / разходи", "payments": "Плащания", "refunds": "Възстановявания", "collected": "Получено", "payments_refunds": "Плащания и възстановявания", "credit_cancellations": "Кредитни известия и сторна", "control": "Контрол", "control_title": "КОНТРОЛ ПРЕДИ ИЗНОС ЗА СЧЕТОВОДСТВО", "foreign_currency": "Позиции в други валути", "missing_date": "Позиции без дата", "currency": "Валута", "number": "Номер", "none": "Няма", "empty_period": "Няма позиции за избрания период.", "issued_invoice": "Издадена фактура", "incoming_bill": "Входяща фактура", "outgoing_bill": "Изходяща фактура", "credit_note": "Кредитно известие", "cancelled_invoice": "Сторнирана фактура", "payment": "Плащане", "refund": "Възстановяване на плащане", "vat_working_note": "Това е работна справка за проверка със счетоводителя. Не е XML файл или директна декларация към NRA. Издадените фактури, кредитните известия и входящите фактури са на отделни листове.", "vat_control_warning": "Контрол: {foreign} позиции в други валути и {missing} позиции без дата не са включени в сумите за ДДС. Проверете листа '{control}' в Excel копието преди осчетоводяване.", "accountant_control_warning": "Контрол: {foreign} позиции в други валути и {missing} позиции без дата не са включени в сумите за ДДС. Детайлите са в листа '{control}' в Excel копието.", "vat_footer": "OpsNest - ДДС справка на проекта за вътрешна проверка и счетоводство", "accountant_footer": "OpsNest - пълен износ на проекта за счетоводството", "page": "Страница", "sheet_summary": "Обобщение", "sheet_output": "Изходящ ДДС", "sheet_input": "Входящ ДДС", "sheet_control": "Контрол", "sheet_outgoing": "Изходящи фактури", "sheet_incoming": "Входящи фактури", "sheet_payments": "Плащания и възстановявания", "sheet_corrections": "Кредитни известия и сторна", "sheet_vat": "ДДС преглед",
     },
     "ru": {
         "vat_file": "uchet_NDS", "accountant_file": "eksport_dlya_buhgalterii", "vat_title": "ЖУРНАЛ НДС ПО ПРОЕКТУ", "vat_subtitle": "Рабочий экспорт для бухгалтера - не XML-файл и не прямая подача в NRA", "accountant_title": "ЭКСПОРТ ПРОЕКТА ДЛЯ БУХГАЛТЕРИИ", "accountant_note": "Рабочий пакет для бухгалтера: проверьте исходящие и входящие счета, платежи/возвраты, НДС, кредитовые ноты и сторно перед проводкой. Это не прямой NRA XML-экспорт.",
-        "company": "Компания", "project": "Проект", "site": "Строительная площадка", "period": "Период", "generated": "Создано", "date": "Дата", "type": "Тип", "document_type": "Тип документа", "document_number": "Номер документа", "invoice": "Счет", "customer": "Клиент", "partner": "Контрагент", "partner_vat": "Номер НДС контрагента", "description": "Описание", "payment_method_note": "Способ / примечание", "net_base": "Сумма без НДС", "net_amount": "Сумма без НДС", "vat": "НДС", "total": "Итого", "summary": "Обзор", "output_vat": "Исходящий НДС", "input_vat": "Входящий НДС", "vat_payable": "НДС к уплате / возврату", "output_ledger": "Исходящий НДС", "input_ledger": "Входящий НДС", "outgoing_invoices": "Исходящие счета", "incoming_bills": "Входящие счета / расходы", "payments": "Платежи", "refunds": "Возвраты", "collected": "Получено", "payments_refunds": "Платежи и возвраты", "credit_cancellations": "Кредитовые ноты и сторно", "control": "Контроль", "control_title": "КОНТРОЛЬ ПЕРЕД ЭКСПОРТОМ ДЛЯ БУХГАЛТЕРИИ", "foreign_currency": "Позиции вне EUR", "missing_date": "Позиции без даты", "currency": "Валюта", "number": "Номер", "none": "Нет", "empty_period": "Нет позиций за выбранный период.", "issued_invoice": "Выставленный счет", "incoming_bill": "Входящий счет", "outgoing_bill": "Исходящий счет", "credit_note": "Кредитовая нота", "cancelled_invoice": "Сторнированный счет", "payment": "Платеж", "refund": "Возврат платежа", "vat_working_note": "Это рабочий журнал для проверки с бухгалтером. Он не является XML-файлом или прямой подачей в NRA. Выставленные счета, кредитовые ноты и входящие счета приведены на отдельных листах.", "vat_control_warning": "Контроль: {foreign} позиций вне EUR и {missing} позиций без даты исключены из сумм НДС. Проверьте лист '{control}' в копии Excel перед проводкой.", "accountant_control_warning": "Контроль: {foreign} позиций вне EUR и {missing} позиций без даты исключены из сумм НДС. Подробности находятся на листе '{control}' в копии Excel.", "vat_footer": "OpsNest - журнал НДС проекта для внутренней проверки и бухгалтерии", "accountant_footer": "OpsNest - полный экспорт проекта для бухгалтерии", "page": "Страница", "sheet_summary": "Сводка", "sheet_output": "Исходящий НДС", "sheet_input": "Входящий НДС", "sheet_control": "Контроль", "sheet_outgoing": "Исходящие счета", "sheet_incoming": "Входящие счета", "sheet_payments": "Платежи и возвраты", "sheet_corrections": "Кредитовые ноты и сторно", "sheet_vat": "Обзор НДС",
+        "company": "Компания", "project": "Проект", "site": "Строительная площадка", "period": "Период", "generated": "Создано", "date": "Дата", "type": "Тип", "document_type": "Тип документа", "document_number": "Номер документа", "invoice": "Счет", "customer": "Клиент", "partner": "Контрагент", "partner_vat": "Номер НДС контрагента", "description": "Описание", "payment_method_note": "Способ / примечание", "net_base": "Сумма без НДС", "net_amount": "Сумма без НДС", "vat": "НДС", "total": "Итого", "summary": "Обзор", "output_vat": "Исходящий НДС", "input_vat": "Входящий НДС", "vat_payable": "НДС к уплате / возврату", "output_ledger": "Исходящий НДС", "input_ledger": "Входящий НДС", "outgoing_invoices": "Исходящие счета", "incoming_bills": "Входящие счета / расходы", "payments": "Платежи", "refunds": "Возвраты", "collected": "Получено", "payments_refunds": "Платежи и возвраты", "credit_cancellations": "Кредитовые ноты и сторно", "control": "Контроль", "control_title": "КОНТРОЛЬ ПЕРЕД ЭКСПОРТОМ ДЛЯ БУХГАЛТЕРИИ", "foreign_currency": "Позиции в других валютах", "missing_date": "Позиции без даты", "currency": "Валюта", "number": "Номер", "none": "Нет", "empty_period": "Нет позиций за выбранный период.", "issued_invoice": "Выставленный счет", "incoming_bill": "Входящий счет", "outgoing_bill": "Исходящий счет", "credit_note": "Кредитовая нота", "cancelled_invoice": "Сторнированный счет", "payment": "Платеж", "refund": "Возврат платежа", "vat_working_note": "Это рабочий журнал для проверки с бухгалтером. Он не является XML-файлом или прямой подачей в NRA. Выставленные счета, кредитовые ноты и входящие счета приведены на отдельных листах.", "vat_control_warning": "Контроль: {foreign} позиций в других валютах и {missing} позиций без даты исключены из сумм НДС. Проверьте лист '{control}' в копии Excel перед проводкой.", "accountant_control_warning": "Контроль: {foreign} позиций в других валютах и {missing} позиций без даты исключены из сумм НДС. Подробности находятся на листе '{control}' в копии Excel.", "vat_footer": "OpsNest - журнал НДС проекта для внутренней проверки и бухгалтерии", "accountant_footer": "OpsNest - полный экспорт проекта для бухгалтерии", "page": "Страница", "sheet_summary": "Сводка", "sheet_output": "Исходящий НДС", "sheet_input": "Входящий НДС", "sheet_control": "Контроль", "sheet_outgoing": "Исходящие счета", "sheet_incoming": "Входящие счета", "sheet_payments": "Платежи и возвраты", "sheet_corrections": "Кредитовые ноты и сторно", "sheet_vat": "Обзор НДС",
     },
 }
 
@@ -328,6 +329,23 @@ def _localized_document_type(value: Any, language: Any) -> str:
     }
     return report_text(keys[source], language) if source in keys else source
 
+def _report_description(row: dict[str, Any], language: Any) -> str:
+    """Translate generated credit references, never the user's reason or item text."""
+    if row.get("source_invoice_number"):
+        prefix = {"sr": "Uz fakturu", "bg": "Към фактура", "en": "For invoice", "de": "Zu Rechnung", "ru": "К счету"}[normalize_report_language(language)]
+        return f"{prefix} {row['source_invoice_number']}: {row.get('credit_reason') or ''}"
+    return str(row.get("description") or "")
+
+
+def _report_payment_note(row: dict[str, Any], language: Any) -> str:
+    method = str(row.get("method") or "")
+    if decimal_from(row.get("amount") or 0) < 0 and method.startswith("Povraćaj - "):
+        method = report_text("refund", language) + " - " + _translated_payment_method(method[len("Povraćaj - "):], normalize_report_language(language))
+    else:
+        method = _translated_payment_method(method, normalize_report_language(language))
+    return " | ".join(value for value in (method, str(row.get("note") or "")) if value)
+
+
 LOCAL_RUNTIME_NODE_EXE = APP_DIR / "runtime" / "node" / "bin" / "node.exe"
 LOCAL_ARTIFACT_TOOL = APP_DIR / "runtime" / "node" / "node_modules" / "@oai" / "artifact-tool" / "dist" / "artifact_tool.mjs"
 CODEx_RUNTIME_NODE_EXE = Path(r"C:\Users\49162\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe")
@@ -340,6 +358,7 @@ def _register_fonts() -> tuple[str, str]:
     candidates = [
         (Path("C:/Windows/Fonts/arial.ttf"), Path("C:/Windows/Fonts/arialbd.ttf")),
         (Path("C:/Windows/Fonts/Calibri.ttf"), Path("C:/Windows/Fonts/Calibrib.ttf")),
+        (Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"), Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")),
     ]
     for regular, bold in candidates:
         if regular.exists() and bold.exists():
@@ -1431,7 +1450,7 @@ def export_credit_note_xlsx(note: dict[str, Any], output_path: Path) -> Path:
         cell.fill = light_fill if col == 3 else PatternFill("solid", fgColor="FFFFFF")
         cell.alignment = Alignment(horizontal="right" if col < 4 else "center", vertical="center")
         if col < 4:
-            cell.number_format = '#,##0.00 "EUR"'
+            cell.number_format = f'#,##0.00 "{note.get("currency") or "EUR"}"'
     sheet.row_dimensions[19].height = 26
     sheet.merge_cells("A22:D22")
     sheet["A22"] = text["archive_note"]
@@ -1543,14 +1562,15 @@ def export_credit_note_pdf(note: dict[str, Any], output_path: Path, logo_path: P
 
     c.setFillColor(TEXT_MUTED)
     c.setFont(regular, 7.3)
-    c.drawString(MARGIN_X, 21 * mm, "Dokument je vezan za izvornu fakturu i evidentirani povraćaj uplate.")
-    c.drawString(MARGIN_X, 16.5 * mm, "Proverite poresko knjiženje sa knjigovođom pre predaje evidencije.")
+    _draw_paragraph(c, escape(text["archive_note"]), MARGIN_X, 15 * mm, CONTENT_W, 12 * mm,
+                    _pstyle("credit-note-archive", 7.3, color=TEXT_MUTED, leading=10))
     c.setStrokeColor(GREEN_LINE)
     c.line(MARGIN_X, 12 * mm, PAGE_W - MARGIN_X, 12 * mm)
     c.setFillColor(TEXT_DARK)
     c.setFont(regular, 8)
-    c.drawString(MARGIN_X, 7 * mm, "Sastavio: __________________________________________")
-    c.drawRightString(PAGE_W - MARGIN_X, 7 * mm, "Primio: __________________________________________")
+    labels = invoice_document_text(source)
+    c.drawString(MARGIN_X, 7 * mm, labels["prepared"] + " __________________________")
+    c.drawRightString(PAGE_W - MARGIN_X, 7 * mm, labels["received"] + " __________________________")
     c.save()
     return output_path
 
@@ -1585,7 +1605,7 @@ def _vat_report_base_name(report: dict[str, Any]) -> str:
     return safe_filename(f"{report_text('vat_file', language)}_{start}_{end}_{language.upper()}")
 
 
-def _vat_report_rows(sheet, rows: list[dict[str, Any]], totals: dict[str, Any], section: str, language: Any) -> None:
+def _vat_report_rows(sheet, rows: list[dict[str, Any]], totals: dict[str, Any], section: str, language: Any, currency: str = "EUR") -> None:
     dark = "245B41"
     mid = "2F7A56"
     light = "EAF4EC"
@@ -1619,7 +1639,7 @@ def _vat_report_rows(sheet, rows: list[dict[str, Any]], totals: dict[str, Any], 
             row.get("document_no") or "",
             row.get("partner_name") or "",
             row.get("partner_vat") or "",
-            row.get("description") or "",
+            _report_description(row, language),
             float(row.get("net_amount") or 0),
             float(row.get("vat_amount") or 0),
             float(row.get("gross_amount") or 0),
@@ -1630,7 +1650,7 @@ def _vat_report_rows(sheet, rows: list[dict[str, Any]], totals: dict[str, Any], 
             cell.border = border
             cell.alignment = Alignment(horizontal="right" if col >= 7 else "left", vertical="top", wrap_text=True)
             if col >= 7:
-                cell.number_format = '#,##0.00 "EUR"'
+                cell.number_format = f'#,##0.00 "{currency}"'
         sheet.row_dimensions[row_index].height = 24
     total_row = max(2, len(rows) + 2)
     sheet.merge_cells(start_row=total_row, start_column=1, end_row=total_row, end_column=6)
@@ -1652,7 +1672,7 @@ def _vat_report_rows(sheet, rows: list[dict[str, Any]], totals: dict[str, Any], 
         cell.font = total_font
         cell.border = border
         cell.alignment = Alignment(horizontal="right")
-        cell.number_format = '#,##0.00 "EUR"'
+        cell.number_format = f'#,##0.00 "{currency}"'
     sheet.auto_filter.ref = f"A1:I{max(1, len(rows) + 1)}"
     sheet.print_title_rows = "1:1"
 
@@ -1721,7 +1741,7 @@ def export_project_vat_evidence_xlsx(report: dict[str, Any], output_path: Path) 
             value = float(totals.get(key) or 0) if key else ""
             cell = summary.cell(row=row, column=col, value=value)
             if key:
-                cell.number_format = '#,##0.00 "EUR"'
+                cell.number_format = f'#,##0.00 "{report.get("currency") or "EUR"}"'
                 cell.alignment = Alignment(horizontal="right")
             cell.border = border
         for col in range(1, 5):
@@ -1735,9 +1755,9 @@ def export_project_vat_evidence_xlsx(report: dict[str, Any], output_path: Path) 
     note.alignment = Alignment(wrap_text=True, vertical="top")
 
     output_sheet = workbook.create_sheet(report_text("sheet_output", language))
-    _vat_report_rows(output_sheet, list(report.get("output_rows") or []), totals, "output", language)
+    _vat_report_rows(output_sheet, list(report.get("output_rows") or []), totals, "output", language, report.get("currency") or "EUR")
     input_sheet = workbook.create_sheet(report_text("sheet_input", language))
-    _vat_report_rows(input_sheet, list(report.get("input_rows") or []), totals, "input", language)
+    _vat_report_rows(input_sheet, list(report.get("input_rows") or []), totals, "input", language, report.get("currency") or "EUR")
     control = workbook.create_sheet(report_text("sheet_control", language))
     control.sheet_view.showGridLines = False
     control.column_dimensions["A"].width = 23
@@ -1772,7 +1792,7 @@ def export_project_vat_evidence_xlsx(report: dict[str, Any], output_path: Path) 
         control.cell(offset, 1, _localized_document_type(row.get("document_type"), language))
         control.cell(offset, 2, row.get("document_no"))
         control.cell(offset, 3, row.get("partner_name"))
-        control.cell(offset, 4, row.get("description"))
+        control.cell(offset, 4, _report_description(row, language))
         control.cell(offset, 5, row.get("currency"))
     if not missing:
         control.cell(missing_start + 2, 1, report_text("none", language))
@@ -1790,29 +1810,33 @@ def _vat_pdf_cell(value: Any, style: ParagraphStyle) -> Paragraph:
     return Paragraph(text or "-", style)
 
 
+def _report_widths(weights: list[float]) -> list[float]:
+    """Use the printable width of portrait A4, preserving relative column widths."""
+    return [178 * mm * weight / sum(weights) for weight in weights]
+
+
 def _vat_pdf_ledger(rows: list[dict[str, Any]], title: str, language: Any, style_token: str) -> list[Any]:
     body = _pstyle(f"vat-body-{style_token}", 6.7, color=TEXT_DARK, leading=8)
     money = _pstyle(f"vat-money-{style_token}", 6.7, color=TEXT_DARK, align=TA_RIGHT, leading=8)
     header = _pstyle(f"vat-header-{style_token}", 6.6, bold=True, color=colors.white, align=TA_CENTER, leading=7.5)
-    data: list[list[Any]] = [[_vat_pdf_cell(label, header) for label in _vat_ledger_headers(language)]]
+    if not rows:
+        return [Paragraph(title, _pstyle(f"vat-empty-{style_token}", 12, bold=True, color=GREEN_DARK)),
+                Spacer(1, 3 * mm), Paragraph(report_text("empty_period", language), body), Spacer(1, 7 * mm)]
+    headers = [report_text(key, language) for key in ("date", "document_number", "partner", "description", "net_base", "vat", "total")]
+    data: list[list[Any]] = [[_vat_pdf_cell(label, header) for label in headers]]
     for row in rows:
         data.append([
             _vat_pdf_cell(format_date(row.get("document_date")), body),
-            _vat_pdf_cell(_localized_document_type(row.get("document_type"), language), body),
-            _vat_pdf_cell(row.get("document_no"), body),
-            _vat_pdf_cell(row.get("partner_name"), body),
-            _vat_pdf_cell(row.get("partner_vat"), body),
-            _vat_pdf_cell(row.get("description"), body),
-            _vat_pdf_cell(format_currency(row.get("net_amount") or 0, "EUR"), money),
-            _vat_pdf_cell(format_currency(row.get("vat_amount") or 0, "EUR"), money),
-            _vat_pdf_cell(format_currency(row.get("gross_amount") or 0, "EUR"), money),
+            _vat_pdf_cell(_localized_document_type(row.get("document_type"), language) + "\n" + str(row.get("document_no") or ""), body),
+            _vat_pdf_cell(str(row.get("partner_name") or "") + "\n" + str(row.get("partner_vat") or ""), body),
+            _vat_pdf_cell(_report_description(row, language), body),
+            _vat_pdf_cell(format_currency(row.get("net_amount") or 0, row.get("currency") or "EUR"), money),
+            _vat_pdf_cell(format_currency(row.get("vat_amount") or 0, row.get("currency") or "EUR"), money),
+            _vat_pdf_cell(format_currency(row.get("gross_amount") or 0, row.get("currency") or "EUR"), money),
         ])
-    if not rows:
-        data.append([_vat_pdf_cell(report_text("empty_period", language), body), *[_vat_pdf_cell("", body) for _ in range(8)]])
     table = Table(
         data,
-        # The nine columns use the complete printable width of landscape A4.
-        colWidths=[20 * mm, 25 * mm, 35 * mm, 35 * mm, 29 * mm, 53 * mm, 25 * mm, 23 * mm, 26 * mm],
+        colWidths=_report_widths([19, 30, 30, 39, 20, 19, 21]),
         repeatRows=1,
         hAlign="LEFT",
     )
@@ -1836,7 +1860,7 @@ def export_project_vat_evidence_pdf(report: dict[str, Any], output_path: Path) -
     language = _report_language(report)
     project = report.get("project") if isinstance(report.get("project"), dict) else {}
     company = report.get("company") if isinstance(report.get("company"), dict) else {}
-    page_size = landscape(A4)
+    page_size = A4
     document = SimpleDocTemplate(
         str(output_path),
         pagesize=page_size,
@@ -1859,7 +1883,8 @@ def export_project_vat_evidence_pdf(report: dict[str, Any], output_path: Path) -
         [company_identifier_label(language), company.get("eik") or "", report_text("site", language), project.get("site_address") or ""],
         [report_text("period", language), f"{format_date(report.get('period_from'))} - {format_date(report.get('period_to'))}", report_text("generated", language), str(report.get("generated_at") or "").replace("T", " ")],
     ]
-    details_table = Table(details_data, colWidths=[28 * mm, 74 * mm, 28 * mm, 116 * mm])
+    details_data = [[Paragraph(escape(str(cell)), small_style) for cell in row] for row in details_data]
+    details_table = Table(details_data, colWidths=_report_widths([28, 74, 28, 116]))
     details_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (0, -1), GREEN_LIGHT),
         ("BACKGROUND", (2, 0), (2, -1), GREEN_LIGHT),
@@ -1878,11 +1903,13 @@ def export_project_vat_evidence_pdf(report: dict[str, Any], output_path: Path) -
     totals = report.get("totals") if isinstance(report.get("totals"), dict) else {}
     summary_data = [
         ["", report_text("net_amount", language), report_text("vat", language), report_text("total", language)],
-        [report_text("output_vat", language), format_currency(totals.get("output_net") or 0), format_currency(totals.get("output_vat") or 0), format_currency(totals.get("output_gross") or 0)],
-        [report_text("input_vat", language), format_currency(totals.get("input_net") or 0), format_currency(totals.get("input_vat") or 0), format_currency(totals.get("input_gross") or 0)],
-        [report_text("vat_payable", language), "", format_currency(totals.get("vat_payable") or 0), ""],
+        [report_text("output_vat", language), format_currency(totals.get("output_net") or 0, report.get("currency") or "EUR"), format_currency(totals.get("output_vat") or 0, report.get("currency") or "EUR"), format_currency(totals.get("output_gross") or 0, report.get("currency") or "EUR")],
+        [report_text("input_vat", language), format_currency(totals.get("input_net") or 0, report.get("currency") or "EUR"), format_currency(totals.get("input_vat") or 0, report.get("currency") or "EUR"), format_currency(totals.get("input_gross") or 0, report.get("currency") or "EUR")],
+        [report_text("vat_payable", language), "", format_currency(totals.get("vat_payable") or 0, report.get("currency") or "EUR"), ""],
     ]
-    summary_table = Table(summary_data, colWidths=[70 * mm, 55 * mm, 55 * mm, 55 * mm])
+    header_style = _pstyle("vat-summary-header", 7.5, bold=True, color=colors.white)
+    summary_data = [[Paragraph(escape(str(cell)), header_style if index == 0 else small_style) for cell in row] for index, row in enumerate(summary_data)]
+    summary_table = Table(summary_data, colWidths=_report_widths([70, 55, 55, 55]))
     summary_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), GREEN_MID),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
@@ -2024,7 +2051,7 @@ def _accountant_summary_sheet(workbook: Workbook, report: dict[str, Any]) -> Non
             cell.font = Font(name="Arial", size=10, bold=row_index in {13, 15}, color=dark if row_index in {13, 15} else "1F2937")
             cell.alignment = Alignment(horizontal="right" if col > 1 else "left", vertical="center")
             if col > 1 and value not in {"", None}:
-                cell.number_format = '#,##0.00 "EUR"'
+                cell.number_format = f'#,##0.00 "{report.get("currency") or "EUR"}"'
     sheet.merge_cells("A18:D19")
     sheet["A18"] = report_text("accountant_note", language)
     sheet["A18"].font = Font(name="Arial", size=9, italic=True, color="6A7A72")
@@ -2042,7 +2069,7 @@ def _accountant_payment_sheet(workbook: Workbook, report: dict[str, Any]) -> Non
             _localized_document_type(row.get("type"), language),
             row.get("invoice_number") or "",
             row.get("partner_name") or "",
-            " | ".join(value for value in (row.get("method"), row.get("note")) if value),
+            _report_payment_note(row, language),
             float(row.get("amount") or 0),
         )
         for col, value in enumerate(values, start=1):
@@ -2051,7 +2078,7 @@ def _accountant_payment_sheet(workbook: Workbook, report: dict[str, Any]) -> Non
             cell.font = Font(name="Arial", size=9, color="1F2937")
             cell.alignment = Alignment(horizontal="right" if col == 6 else "left", vertical="top", wrap_text=True)
             if col == 6:
-                cell.number_format = '#,##0.00 "EUR"'
+                cell.number_format = f'#,##0.00 "{row.get("currency") or report.get("currency") or "EUR"}"'
         sheet.row_dimensions[row_index].height = 24
     if not rows:
         sheet.cell(row=2, column=1, value=report_text("empty_period", language))
@@ -2073,7 +2100,7 @@ def _accountant_corrections_sheet(workbook: Workbook, report: dict[str, Any]) ->
     for row_index, row in enumerate(rows, start=2):
         values = (
             format_date(row.get("document_date")), row.get("type") or "", row.get("document_no") or "",
-            row.get("partner_name") or "", row.get("description") or "", float(row.get("net_amount") or 0),
+            row.get("partner_name") or "", _report_description(row, language), float(row.get("net_amount") or 0),
             float(row.get("vat_amount") or 0), float(row.get("gross_amount") or 0),
         )
         for col, value in enumerate(values, start=1):
@@ -2082,7 +2109,7 @@ def _accountant_corrections_sheet(workbook: Workbook, report: dict[str, Any]) ->
             cell.font = Font(name="Arial", size=9, color="1F2937")
             cell.alignment = Alignment(horizontal="right" if col >= 6 else "left", vertical="top", wrap_text=True)
             if col >= 6:
-                cell.number_format = '#,##0.00 "EUR"'
+                cell.number_format = f'#,##0.00 "{row.get("currency") or report.get("currency") or "EUR"}"'
         sheet.row_dimensions[row_index].height = 24
     if not rows:
         sheet.cell(row=2, column=1, value=report_text("empty_period", language))
@@ -2115,7 +2142,10 @@ def _accountant_pdf_table(title: str, headers: tuple[str, ...], rows: list[tuple
         data.append([_vat_pdf_cell(value, money if index == len(row) - 1 else body) for index, value in enumerate(row)])
     if not rows:
         data.append([_vat_pdf_cell(empty_message, body), *[_vat_pdf_cell("", body) for _ in headers[1:]]])
-    table = Table(data, colWidths=widths, repeatRows=1, hAlign="LEFT")
+    widths = [*widths]
+    # Dates stay on one line in portrait output; descriptions absorb the reduction.
+    widths[0] = max(widths[0], sum(widths) * 0.11)
+    table = Table(data, colWidths=_report_widths(widths), repeatRows=1, hAlign="LEFT")
     table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), GREEN_MID),
         ("GRID", (0, 0), (-1, -1), 0.35, GREEN_LINE),
@@ -2134,7 +2164,7 @@ def export_project_accountant_pdf(report: dict[str, Any], output_path: Path) -> 
     language = _report_language(report)
     project = report.get("project") if isinstance(report.get("project"), dict) else {}
     company = report.get("company") if isinstance(report.get("company"), dict) else {}
-    page_size = landscape(A4)
+    page_size = A4
     document = SimpleDocTemplate(
         str(output_path), pagesize=page_size, leftMargin=13 * mm, rightMargin=13 * mm,
         topMargin=12 * mm, bottomMargin=13 * mm, title=f"{report_text('accountant_title', language)} - {project.get('name') or ''}",
@@ -2155,12 +2185,12 @@ def export_project_accountant_pdf(report: dict[str, Any], output_path: Path) -> 
     totals = report.get("totals") if isinstance(report.get("totals"), dict) else {}
     summary = Table(
         [
-            [report_text("outgoing_invoices", language), format_currency(totals.get("output_gross") or 0, "EUR")],
-            [report_text("incoming_bills", language), format_currency(totals.get("input_gross") or 0, "EUR")],
-            [report_text("collected", language), format_currency(totals.get("net_collected") or 0, "EUR")],
-            [report_text("vat_payable", language), format_currency(totals.get("vat_payable") or 0, "EUR")],
+            [report_text("outgoing_invoices", language), format_currency(totals.get("output_gross") or 0, report.get("currency") or "EUR")],
+            [report_text("incoming_bills", language), format_currency(totals.get("input_gross") or 0, report.get("currency") or "EUR")],
+            [report_text("collected", language), format_currency(totals.get("net_collected") or 0, report.get("currency") or "EUR")],
+            [report_text("vat_payable", language), format_currency(totals.get("vat_payable") or 0, report.get("currency") or "EUR")],
         ],
-        colWidths=[135 * mm, 136 * mm], hAlign="LEFT",
+        colWidths=_report_widths([135, 136]), hAlign="LEFT",
     )
     summary.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), GREEN_LIGHT),
@@ -2176,8 +2206,8 @@ def export_project_accountant_pdf(report: dict[str, Any], output_path: Path) -> 
     payment_rows = [
         (
             format_date(row.get("payment_date")), _localized_document_type(row.get("type"), language), row.get("invoice_number") or "",
-            row.get("partner_name") or "", " | ".join(value for value in (row.get("method"), row.get("note")) if value),
-            format_currency(row.get("amount") or 0, "EUR"),
+            row.get("partner_name") or "", _report_payment_note(row, language),
+            format_currency(row.get("amount") or 0, row.get("currency") or "EUR"),
         )
         for row in report.get("payment_rows") or []
     ]
@@ -2185,13 +2215,13 @@ def export_project_accountant_pdf(report: dict[str, Any], output_path: Path) -> 
     correction_rows = [
         (
             format_date(row.get("document_date")), report_text("credit_note", language), row.get("document_no") or "",
-            row.get("partner_name") or "", row.get("description") or "", format_currency(row.get("gross_amount") or 0, "EUR"),
+            row.get("partner_name") or "", _report_description(row, language), format_currency(row.get("gross_amount") or 0, row.get("currency") or "EUR"),
         )
         for row in report.get("credit_note_rows") or []
     ] + [
         (
             format_date(row.get("document_date")), report_text("cancelled_invoice", language), row.get("document_no") or "",
-            row.get("partner_name") or "", row.get("description") or "", format_currency(row.get("gross_amount") or 0, "EUR"),
+            row.get("partner_name") or "", _report_description(row, language), format_currency(row.get("gross_amount") or 0, row.get("currency") or "EUR"),
         )
         for row in report.get("cancelled_rows") or []
     ]

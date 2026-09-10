@@ -6,7 +6,7 @@ $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $python = "C:\Users\49162\AppData\Local\Programs\Python\Python313\python.exe"
-$version = "2.13.15"
+$version = "2.13.16"
 $release = Join-Path $root "release"
 
 if (-not (Test-Path $python)) {
@@ -46,6 +46,7 @@ $pyinstallerArgs = @(
 )
 
 & $python @pyinstallerArgs
+if ($LASTEXITCODE -ne 0) { throw "OpsNest installer build failed." }
 
 $installerExe = Join-Path $release "OpsNest-Setup-$version.exe"
 & $signScript -FilePath $installerExe -RequireSignature:$RequireSignature

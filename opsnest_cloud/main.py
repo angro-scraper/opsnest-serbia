@@ -18,7 +18,7 @@ from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -1299,10 +1299,34 @@ def workspace_portal() -> HTMLResponse:
     return response
 
 
+@app.get("/download/desktop")
+def desktop_download() -> RedirectResponse:
+    """Resolve website downloads from exactly the same manifest as desktop updates."""
+    return RedirectResponse(desktop_update()["installer_url"], status_code=307, headers={"Cache-Control": "no-store"})
+
+
+def incomplete_link_page() -> HTMLResponse:
+    return HTMLResponse(
+        '<!doctype html><html lang="sr"><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<title>OpsNest | Nepotpun link</title><body style="font:1rem Segoe UI,sans-serif;'
+        'background:#f3f8fa;color:#102d46;margin:0;padding:2rem">'
+        '<main style="max-width:36rem;margin:4rem auto;background:white;padding:2rem;border-radius:1rem">'
+        '<h1>Link nije potpun ili nije važeći</h1>'
+        '<p>Otvorite novi link iz OpsNest aplikacije. Prijava, podaci firme i plaćanja nisu promenjeni.</p>'
+        '<p><a href="/workspace">Vrati se na prijavu</a> · '
+        '<a href="https://opsnestone.com/support">Podrška</a></p>'
+        '</main></body></html>', status_code=400, headers={"Cache-Control": "no-store"},
+    )
+
+
 @app.get("/activate", response_class=HTMLResponse)
-def activation_page(workspace_id: str) -> HTMLResponse:
+def activation_page(workspace_id: str = "") -> HTMLResponse:
     """Browser-only e-mail verification keeps bot checks outside the desktop app."""
-    normalized_workspace_id = _validate_workspace_id(workspace_id)
+    try:
+        normalized_workspace_id = _validate_workspace_id(workspace_id)
+    except HTTPException:
+        return incomplete_link_page()
     defaults = json.dumps(
         {
             "workspace_id": normalized_workspace_id,
@@ -2801,7 +2825,9 @@ async def paypal_webhook(request: Request, db: Session = Depends(get_session)) -
 
 
 @app.get("/checkout", response_class=HTMLResponse)
-def checkout_page(session: str) -> HTMLResponse:
+def checkout_page(session: str = "") -> HTMLResponse:
+    if not session.strip():
+        return incomplete_link_page()
     safe_session = escape(session, quote=True)
     paypal_sdk_host = "www.sandbox.paypal.com" if settings.paypal_mode == "sandbox" else "www.paypal.com"
     return HTMLResponse(

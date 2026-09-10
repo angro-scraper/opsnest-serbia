@@ -224,7 +224,9 @@ COUNTRY_VAT_DEFAULTS: dict[str, Decimal] = {
     "NL": Decimal("0.21"),
     "PL": Decimal("0.23"),
     "PT": Decimal("0.23"),
-    "RO": Decimal("0.19"),
+    # Standard rate from 2025-08-01; current EU rates checked 2026-09-10:
+    # https://europa.eu/youreurope/business/finance-and-tax/vat/vat-rules-rates/index_en.htm
+    "RO": Decimal("0.21"),
     "RS": Decimal("0.20"),
     "SK": Decimal("0.23"),
     "SI": Decimal("0.22"),
@@ -266,6 +268,19 @@ def default_vat_rate_for_country(value: Any) -> Decimal:
 def default_currency_for_country(value: Any) -> str:
     """Return a practical starting invoice currency for a new company."""
     return COUNTRY_CURRENCY_DEFAULTS.get(normalize_country_code(value), "EUR")
+
+
+def default_document_language_for_country(value: Any) -> str:
+    """Only return languages implemented by the invoice renderer."""
+    return {"RS": "sr", "BG": "bg"}.get(normalize_country_code(value), "en")
+
+
+def company_vat_rate(company: dict[str, Any]) -> Decimal:
+    """An explicit zero is a value, not a missing setting."""
+    if company.get("vat_regime", "standard") != "standard":
+        return Decimal("0")
+    raw = company.get("default_vat_rate")
+    return default_vat_rate_for_country(company.get("country_code")) if raw in (None, "") else decimal_from(raw)
 
 
 def normalize_currency(value: Any, *, fallback: str = DEFAULT_CURRENCY) -> str:
@@ -2965,8 +2980,16 @@ class Database:
         payload["einvoice_route"] = str(payload.get("einvoice_route") or "automatic").strip().lower()
         if payload["einvoice_route"] not in EINVOICE_ROUTE_CODES:
             payload["einvoice_route"] = "automatic"
-        payload["default_vat_rate"] = float(payload.get("default_vat_rate") or DEFAULT_VAT_RATE)
-        payload["payment_term_days"] = int(payload.get("payment_term_days") or DEFAULT_PAYMENT_TERM_DAYS)
+        raw_rate = payload.get("default_vat_rate")
+        payload["default_vat_rate"] = float(default_vat_rate_for_country(payload["country_code"]) if raw_rate in (None, "") else raw_rate)
+        if payload["vat_regime"] != "standard":
+            payload["default_vat_rate"] = 0.0
+        if not 0 <= payload["default_vat_rate"] <= 1:
+            raise ValueError("PDV stopa mora biti između 0 i 1 (na primer 0.20 za 20%).")
+        raw_term = payload.get("payment_term_days")
+        payload["payment_term_days"] = int(DEFAULT_PAYMENT_TERM_DAYS if raw_term in (None, "") else raw_term)
+        if not 0 <= payload["payment_term_days"] <= 3650:
+            raise ValueError("Rok plaćanja mora biti između 0 i 3650 dana.")
         payload["exchange_rate"] = float(payload.get("exchange_rate") or DEFAULT_EXCHANGE_RATE)
         payload["smtp_port"] = int(payload.get("smtp_port") or DEFAULT_SMTP_PORT)
         payload["smtp_security"] = str(payload.get("smtp_security") or DEFAULT_SMTP_SECURITY).strip().lower() or DEFAULT_SMTP_SECURITY
@@ -3560,12 +3583,15 @@ class Database:
         if commit:
             self.conn.commit()
 
-    def project_vat_evidence(self, project_id: int, period_from: Any, period_to: Any) -> dict[str, Any]:
-        """Build a EUR-only working VAT ledger for an accountant, grouped by project and period.
+    def project_vat_evidence(self, project_id: int, period_from: Any, period_to: Any, *, currency: str | None = None) -> dict[str, Any]:
+        """Build a single-currency working VAT ledger, grouped by project and period.
 
         This is deliberately a review/export aid, not a generated NRA submission file.
         Draft and cancelled invoices are excluded; formal credit notes reduce output VAT.
         """
+        report_currency = str(currency or self.get_company().get("default_currency") or DEFAULT_CURRENCY).strip().upper()
+        if report_currency not in SUPPORTED_CURRENCIES:
+            raise ValueError("Izabrana valuta izveštaja nije podržana.")
         project = self.get_project(int(project_id))
         if not project:
             raise ValueError("Projekat ne postoji.")
@@ -3593,7 +3619,7 @@ class Database:
             SELECT c.id, c.issue_date AS document_date, c.credit_note_number AS document_no,
                    c.customer_name AS partner_name, i.customer_vat AS partner_vat,
                    ('Uz fakturu ' || COALESCE(c.source_invoice_number, '') || ': ' || COALESCE(c.reason, '')) AS description,
-                   c.net_amount, c.vat_amount, c.gross_amount, c.currency
+                   c.net_amount, c.vat_amount, c.gross_amount, c.currency, c.source_invoice_number, c.reason
             FROM credit_notes c
             LEFT JOIN invoices i ON i.id = c.source_invoice_id
             WHERE c.project_id = ?
@@ -3636,6 +3662,8 @@ class Database:
                 "partner_name": str(source.get("partner_name") or ""),
                 "partner_vat": str(source.get("partner_vat") or ""),
                 "description": str(source.get("description") or ""),
+                "source_invoice_number": str(source.get("source_invoice_number") or ""),
+                "credit_reason": str(source.get("reason") or ""),
                 "net_amount": money_round(multiplier * decimal_from(source.get("net_amount") or 0)),
                 "vat_amount": money_round(multiplier * decimal_from(source.get("vat_amount") or 0)),
                 "gross_amount": money_round(multiplier * decimal_from(source.get("gross_amount") or 0)),
@@ -3646,7 +3674,7 @@ class Database:
                 return
             if document_date < start or document_date > end:
                 return
-            if prepared["currency"] != DEFAULT_CURRENCY:
+            if prepared["currency"] != report_currency:
                 foreign_currency_rows.append(prepared)
                 return
             (output_rows if section == "output" else input_rows).append(prepared)
@@ -3678,7 +3706,7 @@ class Database:
             "period_from": start.isoformat(),
             "period_to": end.isoformat(),
             "generated_at": now_iso(),
-            "currency": DEFAULT_CURRENCY,
+            "currency": report_currency,
             "output_rows": output_rows,
             "input_rows": input_rows,
             "foreign_currency_rows": foreign_currency_rows,
@@ -3696,14 +3724,14 @@ class Database:
             },
         }
 
-    def project_accountant_report(self, project_id: int, period_from: Any, period_to: Any) -> dict[str, Any]:
-        """Build one clear, EUR-only accountant package for a selected project period.
+    def project_accountant_report(self, project_id: int, period_from: Any, period_to: Any, *, currency: str | None = None) -> dict[str, Any]:
+        """Build a single-currency accountant package without implicit FX conversion.
 
         The detailed VAT report remains the source for issued and incoming documents.
         This adds cash movements plus cancelled invoices so a beginner does not need to
         assemble separate lists before sending the period to an accountant.
         """
-        report = self.project_vat_evidence(project_id, period_from, period_to)
+        report = self.project_vat_evidence(project_id, period_from, period_to, currency=currency)
         start = parse_date(report["period_from"])
         end = parse_date(report["period_to"])
         if not start or not end:
@@ -3738,7 +3766,7 @@ class Database:
                 "amount": amount,
                 "currency": currency,
             }
-            if currency != DEFAULT_CURRENCY:
+            if currency != report["currency"]:
                 foreign_currency_payments.append(prepared)
             else:
                 payments.append(prepared)
@@ -3798,9 +3826,9 @@ class Database:
         }
         return result
 
-    def project_period_summary(self, project_id: int, period_from: Any, period_to: Any) -> dict[str, Any]:
+    def project_period_summary(self, project_id: int, period_from: Any, period_to: Any, *, currency: str | None = None) -> dict[str, Any]:
         """Return the beginner-friendly income, cost, collection and VAT view for one period."""
-        report = self.project_accountant_report(project_id, period_from, period_to)
+        report = self.project_accountant_report(project_id, period_from, period_to, currency=currency)
         start = str(report["period_from"])
         end = str(report["period_to"])
         receivables = self.conn.execute(
@@ -3820,7 +3848,7 @@ class Database:
               AND i.issue_date >= ? AND i.issue_date <= ?
               AND i.currency = ?
             """,
-            (int(project_id), start, end, DEFAULT_CURRENCY),
+            (int(project_id), start, end, report["currency"]),
         ).fetchone()
         totals = report["totals"]
         income_net = money_round(totals["output_net"])
@@ -3829,6 +3857,8 @@ class Database:
             "project": report["project"],
             "period_from": start,
             "period_to": end,
+            "currency": report["currency"],
+            "excluded_currency_count": len(report["foreign_currency_rows"]) + len(report["foreign_currency_payments"]),
             "income_net": income_net,
             "expense_net": expense_net,
             "paid_total": money_round(totals["net_collected"]),
@@ -4821,10 +4851,8 @@ class Database:
         invoice = self.get_invoice(invoice_id)
         if not invoice:
             raise ValueError("Faktura nije pronađena.")
-        if invoice.get("status_code") == "draft":
-            raise ValueError("Formalno odobrenje se izdaje samo za sačuvanu fakturu.")
-        if str(invoice.get("currency") or DEFAULT_CURRENCY).upper() != DEFAULT_CURRENCY:
-            raise ValueError("Formalno odobrenje je trenutno dostupno samo za EUR fakture.")
+        if invoice.get("status_code") not in {"issued", "partial", "paid", "due"}:
+            raise ValueError("Formalno odobrenje se izdaje samo za izdatu, nestorniranu fakturu.")
         project_id = int(invoice.get("project_id") or 0)
         if not project_id or not self.get_project(project_id):
             raise ValueError("Faktura mora biti vezana za postojeći projekat.")
@@ -4842,7 +4870,10 @@ class Database:
             "invoice": invoice,
             "refunded_total": refunded_total,
             "credited_total": credited_total,
-            "available_gross": money_round(max(Decimal("0"), refunded_total - credited_total)),
+            "available_gross": money_round(max(Decimal("0"), min(
+                refunded_total - credited_total,
+                money_round(invoice.get("tax_base") or 0) + money_round(invoice.get("vat_total") or 0) - credited_total,
+            ))),
         }
 
     def preview_credit_note_amounts(self, invoice_id: int, gross_amount: Any) -> dict[str, Decimal]:
@@ -4855,7 +4886,7 @@ class Database:
         if gross > info["available_gross"]:
             raise ValueError(
                 f"Iznos odobrenja je veći od raspoloživog povraćaja "
-                f"{format_currency(info['available_gross'], DEFAULT_CURRENCY)}."
+                f"{format_currency(info['available_gross'], invoice.get('currency') or DEFAULT_CURRENCY)}."
             )
         source_net = money_round(invoice.get("tax_base") or 0)
         source_vat = money_round(invoice.get("vat_total") or 0)
@@ -4869,6 +4900,7 @@ class Database:
 
     def create_credit_note(self, invoice_id: int, issue_date: Any, gross_amount: Any, reason: str) -> int:
         """Issue an immutable project credit note after an already recorded refund."""
+        self.assert_business_write_access()
         clean_reason = str(reason or "").strip()
         if not clean_reason:
             raise ValueError("Razlog formalnog odobrenja je obavezan.")
@@ -4876,6 +4908,7 @@ class Database:
         invoice = info["invoice"]
         amounts = self.preview_credit_note_amounts(invoice_id, gross_amount)
         issue_date_iso = iso_from_date(issue_date) or today_iso()
+        self.assert_financial_date_open(issue_date_iso)
         company = self.get_company()
         snapshot = {
             "company": company,
@@ -4913,7 +4946,7 @@ class Database:
                 (
                     seq, number, int(invoice_id), int(invoice["project_id"]), str(invoice.get("invoice_number") or ""),
                     str(invoice.get("customer_name") or ""), str(invoice.get("project_name") or ""), issue_date_iso,
-                    DEFAULT_CURRENCY, clean_reason, float(amounts["net_amount"]), float(amounts["vat_rate_percent"] / Decimal("100")),
+                    invoice.get("currency") or DEFAULT_CURRENCY, clean_reason, float(amounts["net_amount"]), float(amounts["vat_rate_percent"] / Decimal("100")),
                     float(amounts["vat_amount"]), float(amounts["gross_amount"]),
                     json.dumps(snapshot, ensure_ascii=False, sort_keys=True), now,
                 ),
@@ -4922,7 +4955,7 @@ class Database:
             self._record_invoice_audit(
                 invoice_id,
                 "credit_note_issued",
-                f"Izdat je dokument {number}: {format_currency(amounts['gross_amount'], DEFAULT_CURRENCY)}. Razlog: {clean_reason}",
+                f"Izdat je dokument {number}: {format_currency(amounts['gross_amount'], invoice.get('currency') or DEFAULT_CURRENCY)}. Razlog: {clean_reason}",
             )
             self.conn.commit()
         except Exception:
@@ -4949,8 +4982,6 @@ class Database:
             raise ValueError("Faktura nije pronađena.")
         if invoice.get("status_code") == "draft":
             raise ValueError("Nacrt možete urediti direktno; ispravka je namenjena izdatim fakturama.")
-        if str(invoice.get("currency") or DEFAULT_CURRENCY).upper() != DEFAULT_CURRENCY:
-            raise ValueError("Ispravka se trenutno može napraviti samo za EUR fakturu.")
         self._backup_before_change(
             f"correction_draft_{invoice.get('invoice_number', 'invoice')}",
             replaces_post_backup=True,
@@ -4986,8 +5017,8 @@ class Database:
         issue_date = iso_from_date(payload.get("issue_date")) or today_iso()
         tax_event_date = iso_from_date(payload.get("tax_event_date")) or issue_date
         due_date = iso_from_date(payload.get("due_date")) or issue_date
-        pay_days = int(payload.get("customer_payment_term_days") or customer.get("payment_term_days") or company.get("payment_term_days") or DEFAULT_PAYMENT_TERM_DAYS)
-        requested_currency = str(payload.get("currency") or DEFAULT_CURRENCY).strip().upper()
+        pay_days = int(next((value for value in (payload.get("customer_payment_term_days"), customer.get("payment_term_days"), company.get("payment_term_days")) if value not in (None, "")), DEFAULT_PAYMENT_TERM_DAYS))
+        requested_currency = str(payload.get("currency") or company.get("default_currency") or default_currency_for_country(company.get("country_code"))).strip().upper()
         historic_currency = str(existing_currency or "").strip().upper()
         if historic_currency:
             currency = normalize_currency(historic_currency, fallback=DEFAULT_CURRENCY)
@@ -4998,7 +5029,8 @@ class Database:
         else:
             currency = requested_currency
 
-        vat_rate = decimal_from(payload.get("vat_rate") or company.get("default_vat_rate") or DEFAULT_VAT_RATE)
+        raw_rate = payload.get("vat_rate")
+        vat_rate = company_vat_rate(company) if raw_rate in (None, "") else decimal_from(raw_rate)
         # Forms normally send 0.20, but imports and direct integrations may send 20.
         # Normalize both representations before calculating document totals.
         if vat_rate > 1:
@@ -5010,7 +5042,7 @@ class Database:
             advance_source_invoice_id = None
         requested_language = str(payload.get("document_language") or existing_document_language or "").strip().lower()
         if requested_language not in {"sr", "bg", "en"}:
-            requested_language = "bg" if normalize_country_code(company.get("country_code")) == "BG" else "sr"
+            requested_language = default_document_language_for_country(company.get("country_code"))
         snapshot = {
             "issue_date": issue_date,
             "tax_event_date": tax_event_date,

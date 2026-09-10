@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 .venv/
+node_modules/
 .env
 
 # Generated Windows packages and local application data

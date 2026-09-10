@@ -863,5 +863,47 @@ class CloudControlTests(unittest.TestCase):
             db.close()
 
 
+class PublicExperienceTests(unittest.TestCase):
+    def test_download_and_update_use_identical_manifest(self):
+        client = TestClient(app)
+        manifest = client.get("/v1/public/desktop-update").json()
+        response = client.get("/download/desktop", follow_redirects=False)
+        self.assertEqual(response.status_code, 307)
+        self.assertEqual(response.headers["location"], manifest["installer_url"])
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        for page in (_SOURCE_ROOT / "public_site").glob("*.html"):
+            html = page.read_text(encoding="utf-8")
+            self.assertNotRegex(html, r"OpsNest-Setup-\d+\.\d+\.\d+\.exe", page.name)
+        from opsnest_cloud.desktop_release import current_desktop_release, FALLBACK_RELEASE
+        for url in ("https://evil.example/downloads/OpsNest-Setup-99.0.0.exe", "https://user@opsnestone.com/downloads/OpsNest-Setup-99.0.0.exe", "https://opsnestone.com:444/downloads/OpsNest-Setup-99.0.0.exe"):
+            self.assertEqual(current_desktop_release("99.0.0", url, "a" * 64), FALLBACK_RELEASE)
+
+    def test_incomplete_public_links_show_recovery_without_relaxing_validation(self):
+        client = TestClient(app)
+        for route in ("/activate", "/activate?workspace_id=not-a-uuid", "/checkout", "/checkout?session="):
+            response = client.get(route)
+            self.assertEqual(response.status_code, 400)
+            self.assertIn('href="/workspace"', response.text)
+            self.assertIn("Link nije potpun", response.text)
+            self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(client.get("/activate", params={"workspace_id": str(uuid.uuid4())}).status_code, 200)
+
+    def test_bulgarian_portal_covers_existing_catalogue(self):
+        import ast
+        import re
+        from opsnest_cloud.workspace_portal import workspace_portal_html
+        from opsnest_cloud.workspace_i18n import BG_TRANSLATIONS
+        html = workspace_portal_html()
+        sr = {}
+        for match in re.findall(r"const SR_[A-Z_]+=Object.freeze\((\{.*?\})\);", html, re.S):
+            sr.update(ast.literal_eval(match))
+        self.assertGreater(len(sr), 200)
+        self.assertFalse(set(sr) - BG_TRANSLATIONS.keys())
+        self.assertIn('<option value="bg">Български</option>', html)
+        self.assertNotIn("__OPSNEST_BG_TRANSLATIONS__", html)
+        for label in sr:
+            self.assertTrue(BG_TRANSLATIONS[label].strip(), label)
+
+
 if __name__ == "__main__":
     unittest.main()

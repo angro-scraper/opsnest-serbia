@@ -33,6 +33,7 @@ from delta_fakture_core import (
     Database,
     PlanLimitError,
     DEFAULT_CURRENCY,
+    DEFAULT_VAT_RATE,
     DEFAULT_EXCHANGE_RATE,
     DEFAULT_PAYMENT_TERM_DAYS,
     DEFAULT_SMTP_PORT,
@@ -53,6 +54,8 @@ from delta_fakture_core import (
     calculate_invoice_totals,
     decimal_from,
     default_currency_for_country,
+    default_document_language_for_country,
+    company_vat_rate,
     default_vat_rate_for_country,
     format_currency,
     money_round,
@@ -81,6 +84,7 @@ from delta_fakture_bank import read_bank_statement, statement_file_hash
 from delta_fakture_mail import build_invoice_email_defaults, send_invoice_email, send_message_via_smtp
 from opsnest_cloud_client import CloudApiError, OpsNestCloudClient
 from opsnest_plans import PLAN_CATALOG, plan_details
+from opsnest_company_i18n import COMPANY_TRANSLATIONS
 from opsnest_serbia import (
     KD2010_SOURCE_URL,
     SERBIA_RULES_VERSION,
@@ -177,12 +181,6 @@ INVOICE_DOCUMENT_LANGUAGE_LABELS = {
 # document language, however, should start in the language expected by the
 # selected country pack so a newly created invoice needs as little adjustment
 # as possible.  Users can still deliberately change it per invoice.
-COUNTRY_DOCUMENT_LANGUAGE_DEFAULTS = {
-    "RS": "sr",
-    "BG": "bg",
-    "DE": "de",
-    "AT": "de",
-}
 SUBSCRIPTION_COPY = {
     "sr": {
         "trial": "Besplatni probni period: još {days} dana. Kartica nije potrebna.",
@@ -1520,6 +1518,8 @@ BULGARIAN_UI_AUDIT_TRANSLATIONS = {
     "Automatski backup se pravi pri čuvanju faktura i uplata. Ovaj ekran služi za ručni backup.": "Автоматичен архив се създава при записване на фактури и плащания. Този екран е за ръчно архивиране.",
 }
 UI_TRANSLATIONS.setdefault("bg", {}).update(BULGARIAN_UI_AUDIT_TRANSLATIONS)
+for _company_language, _company_labels in COMPANY_TRANSLATIONS.items():
+    UI_TRANSLATIONS.setdefault(_company_language, {}).update(_company_labels)
 _active_ui_language = "sr"
 CLIPBOARD_HEADER_ALIASES = {
     "category": ("kategorija", "category", "tip", "vrsta", "vid", "vid smr", "vid radova"),
@@ -1609,7 +1609,7 @@ OPSNEST_WEBSITE_URL = "https://opsnestone.com"
 OPSNEST_CLOUD_API_URL = "https://api.opsnestone.com"
 OPSNEST_PRICING_URL = f"{OPSNEST_WEBSITE_URL}/pricing"
 OPSNEST_PAYPAL_CANCELLATION_URL = "https://www.paypal.com/myaccount/autopay/"
-OPSNEST_APP_VERSION = "2.13.15"
+OPSNEST_APP_VERSION = "2.13.16"
 
 
 def normalize_ui_language(value: Any) -> str:
@@ -1647,38 +1647,29 @@ def invoice_document_language_code_from_label(value: Any) -> str:
     return text.lower() if text.lower() in INVOICE_DOCUMENT_LANGUAGE_LABELS else "sr"
 
 
-def default_document_language_for_country(value: Any) -> str:
-    """Return the safe export-language default for a country pack.
-
-    This is an operational document default, not a translation of user-entered
-    descriptions and never a statement about a country's legal requirements.
-    """
-    country = normalize_country_code(value)
-    return COUNTRY_DOCUMENT_LANGUAGE_DEFAULTS.get(country, "en")
-
-
-def company_automation_summary(country_value: Any, activity_code: Any) -> str:
+def company_automation_summary(country_value: Any, activity_code: Any, language: str | None = None) -> str:
     """Explain exactly what the country/activity setup can safely automate."""
     country = normalize_country_code(country_value)
-    country_name = COUNTRY_NAMES.get(country, COUNTRY_NAMES["OTHER"])["sr"]
+    lang = normalize_ui_language(language or active_ui_language())
+    country_name = COUNTRY_NAMES.get(country, COUNTRY_NAMES["OTHER"])[lang]
     currency = default_currency_for_country(country)
-    vat_percent = default_vat_rate_for_country(country) * 100
     document_language = INVOICE_DOCUMENT_LANGUAGE_LABELS[default_document_language_for_country(country)]
     if country == "RS":
         activity = kd2010_activity(str(activity_code or ""))
         profile = serbia_activity_profile(str(activity_code or ""))
-        if activity and len(activity.code) == 4 and profile:
-            profile_text = f"KD 2010 {activity.code} ({activity.title}) → {business_profile_label(profile.profile)}"
+        if activity and len(activity.code) == 4:
+            profile_text = tr("KD 2010 {code} → {profile}.", lang).format(
+                code=activity.code, profile=tr(business_profile_label(profile.profile if profile else "general"), lang))
         else:
-            profile_text = "izaberite četvorocifrenu KD 2010 šifru da se profil delatnosti podesi automatski"
+            profile_text = tr("Izaberite četvorocifrenu KD 2010 šifru.", lang)
     else:
-        profile_text = "profil delatnosti ostaje podesiv dok lokalni šifarnik za ovu državu ne bude uključen"
-    return (
-        f"Automatski profil: {country_name}; {profile_text}. "
-        f"Podrazumevano: {currency}, standardna PDV stopa {vat_percent:g}%, "
-        f"automatski e-faktura tok i izvoz {document_language}. "
-        "Pravna forma i PDV status se potvrđuju ručno — ne mogu se pouzdano zaključiti iz šifre delatnosti."
-    )
+        profile_text = tr("Lokalni šifarnik nije uključen; izaberite profil delatnosti.", lang)
+    return "\n".join((
+        tr("Podrazumevano za nove dokumente: {country} · {currency} · izvoz {language}.", lang).format(
+            country=country_name, currency=currency, language=document_language),
+        profile_text,
+        tr("Pravna forma i PDV status se potvrđuju ručno. Jezik rada je nezavisan od države.", lang),
+    ))
 
 
 COUNTRY_NAMES: dict[str, dict[str, str]] = {
@@ -1756,11 +1747,7 @@ def business_profile_label(value: Any) -> str:
 
 
 def business_profile_code_from_label(value: Any) -> str:
-    text = str(value or "").strip()
-    for code, label in BUSINESS_PROFILE_LABELS.items():
-        if text == label:
-            return code
-    return text if text in BUSINESS_PROFILE_LABELS else "general"
+    return option_code_from_label(value, BUSINESS_PROFILE_LABELS, "general")
 
 
 def serbia_legal_form_label(value: Any) -> str:
@@ -1768,11 +1755,7 @@ def serbia_legal_form_label(value: Any) -> str:
 
 
 def serbia_legal_form_code_from_label(value: Any) -> str:
-    text = str(value or "").strip()
-    for code, label in SERBIA_LEGAL_FORM_LABELS.items():
-        if text == label:
-            return code
-    return text if text in SERBIA_LEGAL_FORM_LABELS else "company"
+    return option_code_from_label(value, SERBIA_LEGAL_FORM_LABELS, "company")
 
 
 def serbia_tax_mode_label(value: Any) -> str:
@@ -1780,11 +1763,7 @@ def serbia_tax_mode_label(value: Any) -> str:
 
 
 def serbia_tax_mode_code_from_label(value: Any) -> str:
-    text = str(value or "").strip()
-    for code, label in SERBIA_TAX_MODE_LABELS.items():
-        if text == label:
-            return code
-    return text if text in SERBIA_TAX_MODE_LABELS else "standard_books"
+    return option_code_from_label(value, SERBIA_TAX_MODE_LABELS, "standard_books")
 
 
 def vat_regime_label(value: Any) -> str:
@@ -1792,11 +1771,7 @@ def vat_regime_label(value: Any) -> str:
 
 
 def vat_regime_code_from_label(value: Any) -> str:
-    text = str(value or "").strip()
-    for code, label in VAT_REGIME_LABELS.items():
-        if text == label:
-            return code
-    return text if text in VAT_REGIME_LABELS else "standard"
+    return option_code_from_label(value, VAT_REGIME_LABELS, "standard")
 
 
 def einvoice_route_label(value: Any) -> str:
@@ -1804,11 +1779,33 @@ def einvoice_route_label(value: Any) -> str:
 
 
 def einvoice_route_code_from_label(value: Any) -> str:
+    return option_code_from_label(value, EINVOICE_ROUTE_LABELS, "automatic")
+
+
+def option_code_from_label(value: Any, labels: dict[str, str], default: str) -> str:
+    """Decode old, current or translated captions without changing business codes."""
     text = str(value or "").strip()
-    for code, label in EINVOICE_ROUTE_LABELS.items():
-        if text == label:
+    if text in labels:
+        return text
+    for code, label in labels.items():
+        if text == label or any(text == tr(label, lang) for lang in UI_LANGUAGE_LABELS):
             return code
-    return text if text in EINVOICE_ROUTE_LABELS else "automatic"
+    return default
+
+
+COMPANY_PAYMENT_LABELS = {"Banka": "Bankovni prenos", "Gotovina": "Gotovina", "Kartica": "Kartica", "Kombinovano": "Kombinovano"}
+COMPANY_CURRENCY_NAMES = {"EUR": "Evro (€)", "RSD": "Srpski dinar", "BGN": "Bugarski lev (istorijski)"}
+
+
+def currency_option_label(value: Any, language: str | None = None) -> str:
+    code = currency_code_from_option(value)
+    name = COMPANY_CURRENCY_NAMES.get(code)
+    return f"{code} — {tr(name, language)}" if name else code
+
+
+def currency_code_from_option(value: Any) -> str:
+    code = str(value or "").split(" ", 1)[0].strip().upper()
+    return code if code in SUPPORTED_CURRENCIES else DEFAULT_CURRENCY
 
 
 def country_option_label(value: Any, language: str | None = None) -> str:
@@ -1819,7 +1816,12 @@ def country_option_label(value: Any, language: str | None = None) -> str:
 
 
 def country_option_values(language: str | None = None) -> list[str]:
-    return [country_option_label(code, language) for code in COUNTRY_VAT_DEFAULTS]
+    # Put the principal Balkan markets in the first visible rows, not off-screen
+    # above the selected OTHER entry. ISO codes remain stable across languages.
+    priority = ("RS", "BG", "BA", "ME", "HR", "MK", "AL", "XK")
+    others = sorted((code for code in COUNTRY_NAMES if code not in (*priority, "OTHER")),
+                    key=lambda code: country_option_label(code, language).split(" - ", 1)[1])
+    return [country_option_label(code, language) for code in (*priority, *others, "OTHER")]
 
 
 def country_code_from_option(value: Any) -> str:
@@ -1940,7 +1942,7 @@ def localize_widget_tree(root: tk.Misc, language: str | None = None) -> None:
                 widget.heading(column, text=tr(source, code))
             setattr(widget, "_opsnest_heading_sources", sources)
 
-        if isinstance(widget, ttk.Combobox):
+        if isinstance(widget, ttk.Combobox) and not getattr(widget, "_opsnest_localization_managed", False):
             # Values inside workflow selectors are visible commands too. Keep
             # the original Serbian values once, then translate the display on
             # every language refresh without changing the stored business code.
@@ -3472,6 +3474,12 @@ class MainApp(tk.Tk):
         for dialog in dialogs:
             try:
                 if not dialog.winfo_exists():
+                    continue
+                editor = getattr(dialog, "editor", dialog)
+                if isinstance(editor, CompanySetupMixin):
+                    # Retain all unsaved company fields; refresh only captions.
+                    editor.vars["ui_language"].set(language_label(code))
+                    editor._sync_company_language()
                     continue
                 localize_widget_tree(dialog, code)
                 refresh = getattr(dialog, "refresh", None)
@@ -5595,7 +5603,116 @@ class SerbiaActivityPicker(tk.Toplevel):
         self.destroy()
 
 
-class CompanyTab(ttk.Frame):
+class CompanySetupMixin:
+    """One country/language workflow shared by registration and company editing."""
+
+    def _finish_company_setup(self) -> None:
+        self._syncing_company_choices = False
+        self._company_combos = {}
+        pending = list(self.winfo_children())
+        variables = {str(var): key for key, var in self.vars.items()}
+        while pending:
+            widget = pending.pop()
+            pending.extend(widget.winfo_children())
+            if isinstance(widget, ttk.Combobox):
+                key = variables.get(str(widget.cget("textvariable")))
+                if key:
+                    self._company_combos[key] = widget
+                    widget._opsnest_localization_managed = True
+        self.country_combo.configure(height=16)
+        self._company_combos["ui_language"].bind("<<ComboboxSelected>>", self._sync_company_language)
+        self.vars["activity_code"].trace_add("write", lambda *_: self._apply_activity_defaults())
+        self._sync_company_language()
+
+    def _company_language(self) -> str:
+        return language_code_from_label(self.vars["ui_language"].get())
+
+    def _sync_company_language(self, _event: tk.Event | None = None) -> None:
+        if self._syncing_company_choices:
+            return
+        self._syncing_company_choices = True
+        try:
+            lang = self._company_language()
+            tables = {
+                "business_profile": (BUSINESS_PROFILE_LABELS, "general"),
+                "legal_form": (SERBIA_LEGAL_FORM_LABELS, "company"),
+                "serbia_tax_mode": (SERBIA_TAX_MODE_LABELS, "standard_books"),
+                "vat_regime": (VAT_REGIME_LABELS, "standard"),
+                "einvoice_route": (EINVOICE_ROUTE_LABELS, "automatic"),
+                "payment_method": (COMPANY_PAYMENT_LABELS, payment_method_default()),
+            }
+            for key, (labels, default) in tables.items():
+                if key not in self._company_combos:
+                    continue
+                raw = self.vars[key].get()
+                # Older databases used Banka as the transfer caption.
+                if key == "payment_method" and raw in {"Banka", "Bank transfer"}:
+                    raw = payment_method_default()
+                selected = option_code_from_label(raw, labels, default)
+                self._company_combos[key].configure(values=[tr(value, lang) for value in labels.values()])
+                self.vars[key].set(tr(labels[selected], lang))
+            country = country_code_from_option(self.vars["country_code"].get())
+            self.country_combo.configure(values=country_option_values(lang))
+            self.vars["country_code"].set(country_option_label(country, lang))
+            currency = currency_code_from_option(self.vars["default_currency"].get())
+            self._company_combos["default_currency"].configure(
+                values=[currency_option_label(code, lang) for code in SUPPORTED_CURRENCIES])
+            self.vars["default_currency"].set(currency_option_label(currency, lang))
+            self._refresh_country_fields()
+            top = self.winfo_toplevel()
+            localize_widget_tree(top if getattr(top, "editor", None) is self else self, lang)
+            self._refresh_automation_summary()
+        finally:
+            self._syncing_company_choices = False
+
+    def _refresh_country_fields(self) -> None:
+        country = country_code_from_option(self.vars["country_code"].get())
+        for parent, row in getattr(self, "_serbia_form_rows", []):
+            # Retain references: grid_slaves omits widgets once grid_remove runs.
+            rows = getattr(self, "_serbia_form_widgets", {})
+            key = (str(parent), row)
+            widgets = rows.setdefault(key, list(parent.grid_slaves(row=row)))
+            self._serbia_form_widgets = rows
+            for widget in widgets:
+                widget.grid() if country == "RS" else widget.grid_remove()
+        identifier = "PIB" if country == "RS" else "EIK / BULSTAT" if country == "BG" else "Poreski / registracioni broj"
+        self._identifier_label._opsnest_source_text = identifier
+        self._identifier_label.configure(text=tr(identifier, self._company_language()))
+
+    def _refresh_automation_summary(self) -> None:
+        self.automation_summary.set(company_automation_summary(
+            country_code_from_option(self.vars["country_code"].get()),
+            self.vars["activity_code"].get(), self._company_language()))
+
+    def _apply_activity_defaults(self) -> None:
+        if getattr(self, "_syncing_company_choices", False):
+            return
+        if country_code_from_option(self.vars["country_code"].get()) == "RS":
+            code = self.vars["activity_code"].get()
+            activity = kd2010_activity(code)
+            if activity and len(activity.code) == 4:
+                profile = serbia_activity_profile(code)
+                self.vars["business_profile"].set(tr(business_profile_label(profile.profile if profile else "general"), self._company_language()))
+        self._refresh_automation_summary()
+
+    def _apply_company_automation(self, _event: tk.Event | None = None) -> None:
+        country = country_code_from_option(self.vars["country_code"].get())
+        self.vars["default_currency"].set(currency_option_label(default_currency_for_country(country), self._company_language()))
+        self._apply_vat_regime()
+        self.vars["einvoice_route"].set(einvoice_route_label("automatic"))
+        if not self.vars["payment_term_days"].get().strip():
+            self.vars["payment_term_days"].set(str(DEFAULT_PAYMENT_TERM_DAYS))
+        self._apply_activity_defaults()
+        self._sync_company_language()
+
+    def _apply_vat_regime(self, _event: tk.Event | None = None) -> None:
+        country = country_code_from_option(self.vars["country_code"].get())
+        rate = default_vat_rate_for_country(country) if vat_regime_code_from_label(self.vars["vat_regime"].get()) == "standard" else Decimal("0")
+        self.vars["default_vat_rate"].set(f"{rate:.2f}")
+        self._refresh_automation_summary()
+
+
+class CompanyTab(CompanySetupMixin, ttk.Frame):
     def __init__(self, master: tk.Widget, app: MainApp) -> None:
         super().__init__(master, style="App.TFrame")
         self.app = app
@@ -5639,15 +5756,21 @@ class CompanyTab(ttk.Frame):
         }
         self.automation_summary = tk.StringVar()
         self._build()
-        self.vars["activity_code"].trace_add("write", lambda *_: self._refresh_automation_summary())
-        self._refresh_automation_summary()
+        self._finish_company_setup()
 
     def _build(self) -> None:
-        outer = ttk.Frame(self, style="App.TFrame")
-        outer.pack(fill="both", expand=True, padx=12, pady=12)
+        # Reserve primary actions before allocating space to the scrollable form.
+        footer = ttk.Frame(self, style="App.TFrame", padding=12)
+        footer.pack(side="bottom", fill="x")
+        self.save_button = ttk.Button(footer, text="Sačuvaj", style="Primary.TButton", command=self.save)
+        self.save_button.pack(side="left")
+        ttk.Button(footer, text="Učitaj iz template-a", command=self.load_template_defaults).pack(side="right")
+        self.form_scroll = ScrollableFrame(self)
+        self.form_scroll.pack(fill="both", expand=True, padx=12, pady=12)
+        outer = self.form_scroll.inner
+        self._serbia_form_rows = []
         outer.columnconfigure(0, weight=1)
         outer.columnconfigure(1, weight=1)
-        outer.rowconfigure(0, weight=1)
 
         left = ttk.LabelFrame(outer, text="Podaci firme", padding=12)
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 8), pady=8)
@@ -5675,6 +5798,10 @@ class CompanyTab(ttk.Frame):
                 add_combo(left, row, 0, label, self.vars[key], list(SERBIA_TAX_MODE_LABELS.values()), width=34)
             else:
                 add_field(left, row, 0, label, self.vars[key], width=34)
+            if key == "eik":
+                self._identifier_label = left.grid_slaves(row=row, column=0)[0]
+            if key in {"activity_code", "legal_form", "serbia_tax_mode"}:
+                self._serbia_form_rows.append((left, row))
             if key == "activity_code":
                 ttk.Button(left, text="Izaberi", command=self.choose_activity_code).grid(row=row, column=2, sticky="w", padx=4)
             if key == "logo_path":
@@ -5683,9 +5810,9 @@ class CompanyTab(ttk.Frame):
         ttk.Button(left, text="Registracija / profil firme", command=self.app.open_company_registration).grid(
             row=row, column=0, columnspan=2, sticky="w", pady=(12, 0)
         )
-        ttk.Button(left, text="Kontrole za Srbiju", command=self.show_serbia_checklist).grid(
-            row=row, column=2, sticky="e", pady=(12, 0)
-        )
+        row += 1
+        ttk.Button(left, text="Kontrole za Srbiju", command=self.show_serbia_checklist).grid(row=row, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        self._serbia_form_rows.append((left, row))
 
         right = ttk.LabelFrame(outer, text="Podešavanja fakture", padding=12)
         right.grid(row=0, column=1, sticky="nsew", padx=(8, 0), pady=8)
@@ -5706,8 +5833,6 @@ class CompanyTab(ttk.Frame):
         add_combo(right, 11, 0, "Jezik programa", self.vars["ui_language"], list(UI_LANGUAGE_LABELS.values()), width=18)
         add_field(right, 12, 0, "Limit za odobrenje vlasnika", self.vars["vendor_bill_owner_approval_threshold"], width=14)
         ttk.Label(right, text="0 = bez limita. Limit važi samo u osnovnoj valuti; strane valute idu vlasniku.", style="Help.TLabel", wraplength=300).grid(row=13, column=0, columnspan=2, sticky="w", pady=(0, 4))
-        ttk.Button(right, text="Sačuvaj", style="Primary.TButton", command=self.save).grid(row=14, column=0, columnspan=2, sticky="w", pady=(12, 0))
-        ttk.Button(right, text="Učitaj iz template-a", command=self.load_template_defaults).grid(row=14, column=1, sticky="e", pady=(12, 0))
 
         mail = ttk.LabelFrame(outer, text="Slanje e-mailom (SMTP)", padding=12)
         mail.grid(row=1, column=0, columnspan=2, sticky="ew", padx=8, pady=(0, 8))
@@ -5737,6 +5862,18 @@ class CompanyTab(ttk.Frame):
             wraplength=620,
         ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(5, 0))
         ttk.Button(mail, text="Test SMTP", style="Primary.TButton", command=self.test_email).grid(row=5, column=0, columnspan=4, sticky="w", pady=(12, 0))
+        self._form_panels = (left, right, mail)
+        self.form_scroll.canvas.bind("<Configure>", self._reflow_company_form, add="+")
+
+    def _reflow_company_form(self, event: tk.Event) -> None:
+        stacked = event.width < 1180
+        if getattr(self, "_form_stacked", None) == stacked:
+            return
+        self._form_stacked = stacked
+        left, right, mail = self._form_panels
+        left.grid_configure(row=0, column=0, columnspan=2 if stacked else 1)
+        right.grid_configure(row=1 if stacked else 0, column=0 if stacked else 1, columnspan=2 if stacked else 1)
+        mail.grid_configure(row=2 if stacked else 1)
 
     def browse_logo(self) -> None:
         path = filedialog.askopenfilename(title="Izaberi logo", filetypes=[("Image files", "*.png *.jpg *.jpeg *.webp"), ("All files", "*.*")])
@@ -5746,7 +5883,7 @@ class CompanyTab(ttk.Frame):
     def choose_activity_code(self) -> None:
         picker = SerbiaActivityPicker(self, self.vars["activity_code"])
         self.wait_window(picker)
-        self._apply_company_automation()
+        self._apply_activity_defaults()
 
     def show_serbia_checklist(self) -> None:
         if country_code_from_option(self.vars["country_code"].get()) != "RS":
@@ -5786,53 +5923,15 @@ class CompanyTab(ttk.Frame):
         )
 
     def load_template_defaults(self) -> None:
-        self.vars["business_profile"].set(business_profile_label("general"))
-        self.vars["country_code"].set(country_option_label("OTHER"))
-        self.vars["default_currency"].set(DEFAULT_CURRENCY)
-        self.vars["default_vat_rate"].set("0.20")
-        self.vars["vat_regime"].set(vat_regime_label("standard"))
-        self.vars["einvoice_route"].set(einvoice_route_label("automatic"))
-        self.vars["exchange_rate"].set(f"{DEFAULT_EXCHANGE_RATE}")
+        # Restore operational defaults without changing company identity, tax
+        # status, registration country, UI language or mail credentials.
         self.vars["payment_term_days"].set(str(DEFAULT_PAYMENT_TERM_DAYS))
         self.vars["payment_method"].set(payment_method_default())
-        self.vars["vendor_bill_owner_approval_threshold"].set("0")
-        self.vars["issue_place"].set("Sofija")
-        self.vars["smtp_security"].set("tls")
-        self.vars["smtp_port"].set(str(DEFAULT_SMTP_PORT))
-        self.vars["smtp_from_name"].set(self.vars["name"].get().strip())
-        self.vars["smtp_reply_to"].set("")
         self._apply_company_automation()
-
-    def _refresh_automation_summary(self) -> None:
-        self.automation_summary.set(company_automation_summary(
-            country_code_from_option(self.vars["country_code"].get()), self.vars["activity_code"].get()
-        ))
-
-    def _apply_company_automation(self, _event: tk.Event | None = None) -> None:
-        country_code = country_code_from_option(self.vars["country_code"].get())
-        self.vars["default_currency"].set(default_currency_for_country(country_code))
-        if vat_regime_code_from_label(self.vars["vat_regime"].get()) == "standard":
-            self.vars["default_vat_rate"].set(f"{default_vat_rate_for_country(country_code):.2f}")
-        self.vars["einvoice_route"].set(einvoice_route_label("automatic"))
-        if not self.vars["payment_term_days"].get().strip():
-            self.vars["payment_term_days"].set(str(DEFAULT_PAYMENT_TERM_DAYS))
-        if not self.vars["payment_method"].get().strip():
-            self.vars["payment_method"].set(payment_method_default())
-        if country_code == "RS":
-            profile = serbia_activity_profile(self.vars["activity_code"].get())
-            if profile:
-                self.vars["business_profile"].set(business_profile_label(profile.profile))
-        self._refresh_automation_summary()
-
-    def _apply_vat_regime(self, _event: tk.Event | None = None) -> None:
-        if vat_regime_code_from_label(self.vars["vat_regime"].get()) == "standard":
-            self._apply_company_automation()
-        else:
-            self.vars["default_vat_rate"].set("0.00")
-            self._refresh_automation_summary()
 
     def refresh(self) -> None:
         company = self.app.db.get_company()
+        self._syncing_company_choices = True
         for key in self.vars:
             value = company.get(key, "")
             if value is None:
@@ -5863,7 +5962,8 @@ class CompanyTab(ttk.Frame):
                 self.vars[key].set(bool(int(value or 0)))
                 continue
             self.vars[key].set(str(value))
-        self._refresh_automation_summary()
+        self._syncing_company_choices = False
+        self._sync_company_language()
 
     def save(self) -> None:
         try:
@@ -5884,14 +5984,14 @@ class CompanyTab(ttk.Frame):
                 "legal_form": serbia_legal_form_code_from_label(self.vars["legal_form"].get()),
                 "serbia_tax_mode": serbia_tax_mode_code_from_label(self.vars["serbia_tax_mode"].get()),
                 "country_code": country_code_from_option(self.vars["country_code"].get()),
-                "default_currency": self.vars["default_currency"].get().strip() or DEFAULT_CURRENCY,
+                "default_currency": currency_code_from_option(self.vars["default_currency"].get()),
                 "default_vat_rate": float(self.vars["default_vat_rate"].get() or 0.2),
                 "vat_regime": vat_regime_code_from_label(self.vars["vat_regime"].get()),
                 "einvoice_route": einvoice_route_code_from_label(self.vars["einvoice_route"].get()),
                 "payment_term_days": int(self.vars["payment_term_days"].get() or DEFAULT_PAYMENT_TERM_DAYS),
                 "exchange_rate": float(self.vars["exchange_rate"].get() or DEFAULT_EXCHANGE_RATE),
                 "issue_place": self.vars["issue_place"].get().strip(),
-                "payment_method": self.vars["payment_method"].get().strip() or payment_method_default(),
+                "payment_method": option_code_from_label(self.vars["payment_method"].get(), COMPANY_PAYMENT_LABELS, payment_method_default()),
                 "smtp_host": self.vars["smtp_host"].get().strip(),
                 "smtp_port": int(self.vars["smtp_port"].get() or DEFAULT_SMTP_PORT),
                 "smtp_security": self.vars["smtp_security"].get().strip().lower() or "tls",
@@ -5909,12 +6009,16 @@ class CompanyTab(ttk.Frame):
         except ValueError as exc:
             messagebox.showerror("Greška", f"Nije moguće sačuvati firmu: {exc}")
             return
-        self.app.db.save_company(payload)
+        try:
+            self.app.db.save_company(payload)
+        except ValueError as exc:
+            messagebox.showerror(tr("Greška", self._company_language()), str(exc), parent=self)
+            return
         self.app.company = self.app.db.get_company()
         self.app.apply_language(payload["ui_language"], persist=False)
         self.app._automatic_reminder_check_started = False
         self.app.after(250, self.app.send_due_payment_reminders_silently)
-        messagebox.showinfo("Sačuvano", "Podaci firme su sačuvani.")
+        messagebox.showinfo(tr("Sačuvano"), tr("Podaci firme su sačuvani."), parent=self)
 
     def test_email(self) -> None:
         SMTPTestDialog(self, self.app)
@@ -7346,15 +7450,16 @@ class CompanyProfileDialog(tk.Toplevel):
         self.configure(background=BG)
         self.resizable(True, True)
 
+        footer = ttk.Frame(self, style="App.TFrame", padding=(12, 0, 12, 12))
+        footer.pack(side="bottom", fill="x")
+        self.close_button = ttk.Button(footer, text="Zatvori", command=self.destroy)
+        self.close_button.pack(side="right")
         content = ttk.Frame(self, style="App.TFrame")
         content.pack(side="top", fill="both", expand=True)
         self.editor = CompanyTab(content, app)
         self.editor.pack(fill="both", expand=True)
         self.editor.refresh()
-
-        footer = ttk.Frame(self, style="App.TFrame", padding=(12, 0, 12, 12))
-        footer.pack(side="bottom", fill="x")
-        ttk.Button(footer, text="Zatvori", command=self.destroy).pack(side="right")
+        localize_widget_tree(self, self.editor._company_language())
 
         self.transient(master.winfo_toplevel())
         self.grab_set()
@@ -7362,7 +7467,7 @@ class CompanyProfileDialog(tk.Toplevel):
         self.bind("<Escape>", lambda event: self.destroy())
 
 
-class CompanyRegistrationDialog(tk.Toplevel):
+class CompanyRegistrationDialog(CompanySetupMixin, tk.Toplevel):
     """Create or update a company profile and its local sign-in credentials."""
 
     def __init__(self, master: tk.Widget, app: MainApp, *, from_access: bool = False) -> None:
@@ -7392,10 +7497,10 @@ class CompanyRegistrationDialog(tk.Toplevel):
             "serbia_tax_mode": tk.StringVar(value=serbia_tax_mode_label(self.company.get("serbia_tax_mode") or "standard_books")),
             "country_code": tk.StringVar(value=country_option_label(self.company.get("country_code") or "OTHER")),
             "default_currency": tk.StringVar(value=str(self.company.get("default_currency") or DEFAULT_CURRENCY)),
-            "default_vat_rate": tk.StringVar(value=str(self.company.get("default_vat_rate") or "0.20")),
+            "default_vat_rate": tk.StringVar(value=str(self.company.get("default_vat_rate", "0.20"))),
             "vat_regime": tk.StringVar(value=vat_regime_label(self.company.get("vat_regime") or "standard")),
             "einvoice_route": tk.StringVar(value=einvoice_route_label(self.company.get("einvoice_route") or "automatic")),
-            "payment_term_days": tk.StringVar(value=str(self.company.get("payment_term_days") or DEFAULT_PAYMENT_TERM_DAYS)),
+            "payment_term_days": tk.StringVar(value=str(self.company.get("payment_term_days", DEFAULT_PAYMENT_TERM_DAYS))),
             "issue_place": tk.StringVar(value=str(self.company.get("issue_place") or "")),
             "ui_language": tk.StringVar(value=language_label(self.company.get("ui_language"))),
             "login_email": tk.StringVar(value=str(self.company.get("login_email") or self.company.get("email") or "")),
@@ -7404,9 +7509,7 @@ class CompanyRegistrationDialog(tk.Toplevel):
         }
         self.automation_summary = tk.StringVar()
         self._build()
-        self.vars["activity_code"].trace_add("write", lambda *_: self._refresh_automation_summary())
-        self._refresh_automation_summary()
-        localize_widget_tree(self, active_ui_language())
+        self._finish_company_setup()
         self.transient(master.winfo_toplevel())
         self.grab_set()
         self.bind("<Escape>", lambda event: self.postpone())
@@ -7421,6 +7524,7 @@ class CompanyRegistrationDialog(tk.Toplevel):
         outer = form_scroll.inner
         outer.columnconfigure(0, weight=1)
         outer.columnconfigure(1, weight=1)
+        self._serbia_form_rows = []
 
         ttk.Label(outer, text="Registracija firme", style="Section.TLabel").grid(row=0, column=0, columnspan=2, sticky="w")
         ttk.Label(
@@ -7459,6 +7563,10 @@ class CompanyRegistrationDialog(tk.Toplevel):
                 add_combo(left, row, 0, label, self.vars[key], list(SERBIA_TAX_MODE_LABELS.values()), width=29)
             else:
                 add_field(left, row, 0, label, self.vars[key], width=29)
+            if key == "eik":
+                self._identifier_label = left.grid_slaves(row=row, column=0)[0]
+            if key in {"activity_code", "legal_form", "serbia_tax_mode"}:
+                self._serbia_form_rows.append((left, row))
             if key == "activity_code":
                 ttk.Button(left, text="Izaberi", command=self.choose_activity_code).grid(row=row, column=2, sticky="w", padx=4)
             if key == "logo_path":
@@ -7511,33 +7619,7 @@ class CompanyRegistrationDialog(tk.Toplevel):
     def choose_activity_code(self) -> None:
         picker = SerbiaActivityPicker(self, self.vars["activity_code"])
         self.wait_window(picker)
-        self._apply_company_automation()
-
-    def _refresh_automation_summary(self) -> None:
-        self.automation_summary.set(company_automation_summary(
-            country_code_from_option(self.vars["country_code"].get()), self.vars["activity_code"].get()
-        ))
-
-    def _apply_company_automation(self, _event: tk.Event | None = None) -> None:
-        country_code = country_code_from_option(self.vars["country_code"].get())
-        self.vars["default_currency"].set(default_currency_for_country(country_code))
-        if vat_regime_code_from_label(self.vars["vat_regime"].get()) == "standard":
-            self.vars["default_vat_rate"].set(f"{default_vat_rate_for_country(country_code):.2f}")
-        self.vars["einvoice_route"].set(einvoice_route_label("automatic"))
-        if not self.vars["payment_term_days"].get().strip():
-            self.vars["payment_term_days"].set(str(DEFAULT_PAYMENT_TERM_DAYS))
-        if country_code == "RS":
-            profile = serbia_activity_profile(self.vars["activity_code"].get())
-            if profile:
-                self.vars["business_profile"].set(business_profile_label(profile.profile))
-        self._refresh_automation_summary()
-
-    def _apply_vat_regime(self, _event: tk.Event | None = None) -> None:
-        if vat_regime_code_from_label(self.vars["vat_regime"].get()) == "standard":
-            self._apply_company_automation()
-        else:
-            self.vars["default_vat_rate"].set("0.00")
-            self._refresh_automation_summary()
+        self._apply_activity_defaults()
 
     def save(self) -> None:
         if not self.vars["name"].get().strip():
@@ -7566,6 +7648,7 @@ class CompanyRegistrationDialog(tk.Toplevel):
             payload["payment_term_days"] = int(payload["payment_term_days"] or DEFAULT_PAYMENT_TERM_DAYS)
             payload["ui_language"] = language_code_from_label(payload["ui_language"])
             payload["country_code"] = country_code_from_option(payload["country_code"])
+            payload["default_currency"] = currency_code_from_option(payload["default_currency"])
             payload["business_profile"] = business_profile_code_from_label(payload["business_profile"])
             payload["legal_form"] = serbia_legal_form_code_from_label(payload["legal_form"])
             payload["serbia_tax_mode"] = serbia_tax_mode_code_from_label(payload["serbia_tax_mode"])
@@ -7579,7 +7662,11 @@ class CompanyRegistrationDialog(tk.Toplevel):
         trial_was_not_started = str(self.subscription.get("status") or "not_started") == "not_started"
         online_company = str(payload.get("name") or "").strip()
         online_email = str(payload.get("email") or payload.get("login_email") or "").strip()
-        self.app.db.save_company(payload)
+        try:
+            self.app.db.save_company(payload)
+        except ValueError as exc:
+            messagebox.showerror(tr("Registracija firme", self._company_language()), str(exc), parent=self)
+            return
         self.app.company = self.app.db.get_company()
         if pin:
             try:
@@ -8103,10 +8190,10 @@ class ProjectsTab(ttk.Frame):
         self.company_bank_var.set(
             f"{tr('Banka')}: {company.get('bank_name') or blank}    |    IBAN: {company.get('iban') or blank}    |    BIC: {company.get('bic') or blank}"
         )
-        vat_rate = float(company.get("default_vat_rate") or DEFAULT_VAT_RATE) * 100
+        vat_rate = float(company_vat_rate(company)) * 100
         country_text = country_option_label(company.get("country_code") or "BG").split(" - ", 1)[-1]
         self.company_settings_var.set(
-            f"{tr('Država')}: {country_text}    |    {tr('Valuta')}: {company.get('default_currency') or DEFAULT_CURRENCY}    |    {tr('PDV stopa')}: {vat_rate:g}%    |    {tr('Rok plaćanja')}: {company.get('payment_term_days') or DEFAULT_PAYMENT_TERM_DAYS} {tr('dana')}"
+            f"{tr('Država')}: {country_text}    |    {tr('Valuta')}: {company.get('default_currency') or DEFAULT_CURRENCY}    |    {tr('PDV stopa')}: {vat_rate:g}%    |    {tr('Rok plaćanja')}: {company.get('payment_term_days', DEFAULT_PAYMENT_TERM_DAYS)} {tr('dana')}"
         )
         customers = self.app.db.list_customers()
         customer_map = {"": ""}
@@ -8378,13 +8465,14 @@ class ProjectDocumentDialog(tk.Toplevel):
         self.partner_var = tk.StringVar()
         self.description_var = tk.StringVar()
         self.net_var = tk.StringVar(value="0")
-        self.vat_var = tk.StringVar(value="20")
-        self.gross_var = tk.StringVar(value="0,00 EUR")
-        self.currency_var = tk.StringVar(value=DEFAULT_CURRENCY)
+        company = self.db.get_company()
+        self.vat_var = tk.StringVar(value=str(company_vat_rate(company) * 100))
+        self.gross_var = tk.StringVar()
+        self.currency_var = tk.StringVar(value=company.get("default_currency") or DEFAULT_CURRENCY)
         self.note_var = tk.StringVar()
         self.source_pdf_path: Path | None = None
         self.ocr_partner_name = ""
-        self.non_eur_source_currency = ""
+        self.unrecognized_source_currency = ""
         self.import_status_var = tk.StringVar(value=tr("PDF račun još nije izabran."))
         if document_id:
             self._load_document()
@@ -8472,11 +8560,12 @@ class ProjectDocumentDialog(tk.Toplevel):
         self.currency_combo = ttk.Combobox(
             outer,
             textvariable=self.currency_var,
-            values=[DEFAULT_CURRENCY],
-            state="disabled",
+            values=SUPPORTED_CURRENCIES,
+            state="readonly",
             style="Modern.TCombobox",
         )
         self.currency_combo.grid(row=10, column=1, sticky="ew", pady=5)
+        self.currency_combo.bind("<<ComboboxSelected>>", lambda _event: self._refresh_total())
         ttk.Label(outer, text="Napomena", style="Field.TLabel").grid(row=11, column=0, sticky="w", padx=(0, 12), pady=5)
         ttk.Entry(outer, textvariable=self.note_var, style="Modern.TEntry").grid(row=11, column=1, sticky="ew", pady=5)
 
@@ -8569,13 +8658,15 @@ class ProjectDocumentDialog(tk.Toplevel):
         if fields.get("vat_rate_percent") is not None:
             self.vat_var.set(format_clipboard_number(fields["vat_rate_percent"]))
         detected_currency = str(fields.get("currency") or "").strip().upper()
-        self.non_eur_source_currency = ""
-        self.currency_var.set(DEFAULT_CURRENCY)
-        if detected_currency and detected_currency not in {DEFAULT_CURRENCY, "€"}:
-            self.non_eur_source_currency = detected_currency
-            fields.setdefault("warnings", []).append(
-                f"PDF je prepoznat kao {detected_currency}; OpsNest trenutno prihvata samo EUR"
-            )
+        if detected_currency == "€":
+            detected_currency = "EUR"
+        self.unrecognized_source_currency = ""
+        if detected_currency in SUPPORTED_CURRENCIES:
+            self.currency_var.set(detected_currency)
+        else:
+            self.unrecognized_source_currency = detected_currency or "?"
+            self.currency_var.set("")
+            fields.setdefault("warnings", []).append("Valuta nije pouzdano prepoznata; izaberite valutu originalnog dokumenta")
         pdf_note = f"PDF: {self.source_pdf_path.name}"
         if pdf_note not in self.note_var.get():
             self.note_var.set(f"{self.note_var.get().strip()} {pdf_note}".strip())
@@ -8636,14 +8727,10 @@ class ProjectDocumentDialog(tk.Toplevel):
         if net is None or vat is None:
             messagebox.showerror("Projektni dokument", "Unesite ispravan iznos bez PDV-a i stopu PDV-a.")
             return
-        if self.non_eur_source_currency:
+        if self.currency_var.get() not in SUPPORTED_CURRENCIES:
             messagebox.showerror(
                 "Projektni dokument",
-                tr("Uvezeni PDF je u valuti {currency}. OpsNest trenutno čuva samo EUR dokumente.").format(
-                    currency=self.non_eur_source_currency
-                )
-                + "\n\n"
-                + tr("Izaberite račun izdat u eurima ili unesite preračunati EUR dokument ručno."),
+                tr("Izaberite valutu originalnog dokumenta. Iznosi se ne preračunavaju automatski."),
             )
             return
         try:
@@ -9183,18 +9270,20 @@ class ProjectVatEvidenceDialog(tk.Toplevel):
         self.report = report
         totals = report["totals"]
         for key in self.summary_vars:
-            self.summary_vars[key].set(fmt_money(totals.get(key) or 0, DEFAULT_CURRENCY))
+            self.summary_vars[key].set(fmt_money(totals.get(key) or 0, report["currency"]))
         self.document_count_var.set(
-            f"Izlazni dokumenti: {totals['output_document_count']} | Ulazni dokumenti: {totals['input_document_count']}"
+            tr("Izlazni dokumenti: {output} | Ulazni dokumenti: {input}").format(
+                output=totals['output_document_count'], input=totals['input_document_count'])
         )
         foreign = len(report.get("foreign_currency_rows") or [])
         missing = len(report.get("missing_date_rows") or [])
         if foreign or missing:
             self.warning_var.set(
-                f"Kontrola pre izvoza: van EUR {foreign}; bez datuma {missing}. Ove stavke nisu u zbiru PDV-a i biće na listu Kontrola."
+                tr("Kontrola pre izvoza: van {currency} {foreign}; bez datuma {missing}. Ove stavke nisu u zbiru PDV-a i biće na listu Kontrola.").format(
+                    currency=report['currency'], foreign=foreign, missing=missing)
             )
         else:
-            self.warning_var.set("Kontrola: sve stavke u izabranom periodu su u EUR i imaju datum.")
+            self.warning_var.set(tr("Kontrola: sve stavke u izabranom periodu su u {currency} i imaju datum.").format(currency=report['currency']))
         return True
 
     def generate(self) -> None:
@@ -9306,10 +9395,10 @@ class ProjectPeriodOverviewDialog(tk.Toplevel):
                 messagebox.showerror("Pregled zarade", str(exc), parent=self)
             return False
         for key, variable in self.values.items():
-            variable.set(fmt_money(summary.get(key) or 0, DEFAULT_CURRENCY))
+            variable.set(fmt_money(summary.get(key) or 0, summary["currency"]))
         self.caption_var.set(
             f"Dokumenti u periodu: izlazni {summary['invoice_count']} | ulazni {summary['input_document_count']}. "
-            "Dugovanja prikazuju otvoren iznos faktura iz izabranog perioda."
+            f"Dugovanja prikazuju otvoren iznos faktura iz izabranog perioda. Van {summary['currency']}: {summary['excluded_currency_count']} stavki (nisu u zbiru)."
         )
         return True
 
@@ -10238,7 +10327,7 @@ class ProjectAccountantExportDialog(tk.Toplevel):
         contents.grid(row=2, column=0, sticky="ew")
         ttk.Label(
             contents,
-            text="Izlazne fakture | Ulazne račune i troškove | Uplate i povraćaje | PDV pregled | Odobrenja i storna | Kontrolu stavki van EUR ili bez datuma",
+            text="Izlazne fakture | Ulazne račune i troškove | Uplate i povraćaje | PDV pregled | Odobrenja i storna | Kontrolu drugih valuta i datuma",
             style="Help.TLabel",
             wraplength=780,
         ).pack(anchor="w")
@@ -10259,13 +10348,16 @@ class ProjectAccountantExportDialog(tk.Toplevel):
         self.report = report
         totals = report["totals"]
         self.summary_var.set(
-            f"Izlazni dokumenti: {totals['output_document_count']} | Ulazni dokumenti: {totals['input_document_count']} | "
-            f"Uplate/povraćaji: {totals['payment_count']} | Odobrenja: {totals['credit_note_count']} | Storna: {totals['cancelled_invoice_count']}"
+            tr("Izlazni dokumenti: {output} | Ulazni dokumenti: {input}").format(
+                output=totals['output_document_count'], input=totals['input_document_count']) + " | " +
+            tr("Uplate/povraćaji: {payments} | Odobrenja: {credits} | Storna: {cancelled}").format(
+                payments=totals['payment_count'], credits=totals['credit_note_count'], cancelled=totals['cancelled_invoice_count'])
         )
         foreign = len(report.get("foreign_currency_rows") or []) + len(report.get("foreign_currency_payments") or [])
         missing = len(report.get("missing_date_rows") or [])
         self.warning_var.set(
-            f"Kontrola: van EUR {foreign}; bez datuma {missing}." if foreign or missing else "Kontrola: sve stavke za ovaj izvoz su u EUR i imaju datum."
+            tr("Valuta izveštaja: {currency}. Kontrola: druge valute {foreign}; bez datuma {missing}.").format(
+                currency=report['currency'], foreign=foreign, missing=missing)
         )
         return True
 
@@ -12169,6 +12261,7 @@ class CreditNoteDialog(tk.Toplevel):
         self.on_saved = on_saved
         self.info = self.db.credit_note_draft_info(invoice_id)
         self.invoice = self.info["invoice"]
+        self.currency = self.invoice.get("currency") or DEFAULT_CURRENCY
         self.credit_note_id: int | None = None
         self.amount_var = tk.StringVar(value=f"{self.info['available_gross']:.2f}".replace(".", ","))
         self.issue_date_var = tk.StringVar(value=date.today().strftime("%d.%m.%Y"))
@@ -12209,9 +12302,9 @@ class CreditNoteDialog(tk.Toplevel):
             ("Izvorna faktura", self.invoice.get("invoice_number") or "-"),
             ("Kupac", self.invoice.get("customer_name") or "-"),
             ("Projekat", self.invoice.get("project_name") or "-"),
-            ("Ukupno povraćeno", fmt_money(self.info["refunded_total"], DEFAULT_CURRENCY)),
-            ("Već izdato odobrenje", fmt_money(self.info["credited_total"], DEFAULT_CURRENCY)),
-            ("Raspoloživo za odobrenje", fmt_money(self.info["available_gross"], DEFAULT_CURRENCY)),
+            ("Ukupno povraćeno", fmt_money(self.info["refunded_total"], self.currency)),
+            ("Već izdato odobrenje", fmt_money(self.info["credited_total"], self.currency)),
+            ("Raspoloživo za odobrenje", fmt_money(self.info["available_gross"], self.currency)),
         ]
         for row, (label, value) in enumerate(source_rows, start=2):
             ttk.Label(outer, text=label, style="Field.TLabel").grid(row=row, column=0, sticky="w", padx=(0, 14), pady=2)
@@ -12219,7 +12312,7 @@ class CreditNoteDialog(tk.Toplevel):
 
         ttk.Separator(outer).grid(row=8, column=0, columnspan=2, sticky="ew", pady=(12, 10))
         add_field(outer, 9, 0, "Datum odobrenja", self.issue_date_var, width=20)
-        amount_entry = add_field(outer, 10, 0, "Ukupno odobrenje (EUR)", self.amount_var, width=20)
+        amount_entry = add_field(outer, 10, 0, f"{tr('Ukupno odobrenje')} ({self.currency})", self.amount_var, width=20)
         amount_entry.bind("<KeyRelease>", lambda _event: self._refresh_amount_summary())
         amount_entry.bind("<FocusOut>", lambda _event: self._refresh_amount_summary())
         ttk.Label(outer, textvariable=self.amount_summary_var, style="Help.TLabel", wraplength=500).grid(
@@ -12256,9 +12349,9 @@ class CreditNoteDialog(tk.Toplevel):
             self.amount_summary_var.set("Unesite iznos do raspoloživog povraćaja.")
             return
         self.amount_summary_var.set(
-            f"Osnovica: {fmt_money(amounts['net_amount'], DEFAULT_CURRENCY)}    "
-            f"PDV: {fmt_money(amounts['vat_amount'], DEFAULT_CURRENCY)}    "
-            f"Ukupno: {fmt_money(amounts['gross_amount'], DEFAULT_CURRENCY)}"
+            f"Osnovica: {fmt_money(amounts['net_amount'], self.currency)}    "
+            f"PDV: {fmt_money(amounts['vat_amount'], self.currency)}    "
+            f"Ukupno: {fmt_money(amounts['gross_amount'], self.currency)}"
         )
 
     def issue_or_retry(self) -> None:
@@ -12278,7 +12371,7 @@ class CreditNoteDialog(tk.Toplevel):
         if not messagebox.askyesno(
             "Potvrda izdavanja",
             f"Izdati formalno odobrenje uz fakturu {self.invoice.get('invoice_number') or ''}?\n\n"
-            f"Ukupno: {fmt_money(amounts['gross_amount'], DEFAULT_CURRENCY)}\n"
+            f"Ukupno: {fmt_money(amounts['gross_amount'], self.currency)}\n"
             "Broj odobrenja i dokument ostaju trajno sačuvani u projektu.",
             parent=self,
         ):
@@ -13896,7 +13989,7 @@ class InvoiceEditor(tk.Toplevel):
         self._refresh_totals()
 
     def _load_correction_draft(self, source_invoice_id: int) -> None:
-        """Copy an issued EUR invoice into a new, unnumbered correction draft."""
+        """Copy an issued invoice into a new correction draft in its original currency."""
         try:
             source = self.db.prepare_invoice_correction_draft(source_invoice_id)
         except ValueError as exc:
@@ -14293,7 +14386,7 @@ class InvoiceEditor(tk.Toplevel):
 
     def _refresh_totals(self) -> None:
         try:
-            vat_rate = float(self.app.company.get("default_vat_rate", 0.20) or 0.20)
+            vat_rate = float(company_vat_rate(self.app.company))
             discount_total = parse_clipboard_number(self.vars["discount_total"].get() or "0")
             retention_input = parse_clipboard_number(self.vars["retention_percent"].get() or "0")
             advance_amount = parse_clipboard_number(self.vars["advance_amount"].get() or "0")
@@ -14319,7 +14412,7 @@ class InvoiceEditor(tk.Toplevel):
                 "paid_total": sum(float(p.get("amount", 0)) for p in self.payment_rows),
                 "balance_total": 0,
             }
-            vat_rate = float(self.app.company.get("default_vat_rate", 0.20) or 0.20)
+            vat_rate = float(company_vat_rate(self.app.company))
         self.vars["vat_caption"].set(f"PDV {vat_rate * 100:g}%")
         self.vars["subtotal"].set(fmt_money(totals["subtotal"], self.vars["currency"].get()))
         self.vars["tax_base"].set(fmt_money(totals["tax_base"], self.vars["currency"].get()))
@@ -14675,7 +14768,7 @@ class InvoiceEditor(tk.Toplevel):
             self,
             payloads,
             currency=self.vars["currency"].get() or DEFAULT_CURRENCY,
-            vat_rate=float(self.app.company.get("default_vat_rate", 0.20) or 0.20),
+            vat_rate=float(company_vat_rate(self.app.company)),
             skipped_rows=skipped_rows,
             insert_hint=insert_hint,
             header_map=header_map,
@@ -14742,7 +14835,7 @@ class InvoiceEditor(tk.Toplevel):
         discount = parse_clipboard_number(payload.get("discount_percent", 0))
         if qty is None or price is None or discount is None:
             raise ValueError("Proverite količinu, cenu i popust.")
-        vat_rate = float(self.app.company.get("default_vat_rate", 0.20) or 0.20)
+        vat_rate = float(company_vat_rate(self.app.company))
         line = {
             "category": payload["category"],
             "description": payload["description"],
@@ -15016,7 +15109,7 @@ class InvoiceEditor(tk.Toplevel):
                 "retention_percent": retention_input / 100.0 if retention_input > 1 else retention_input,
                 "advance_amount": advance_amount,
                 "note": self.note_text.get("1.0", "end").strip(),
-                "vat_rate": float(self.app.company.get("default_vat_rate", 0.20) or 0.20),
+                "vat_rate": float(company_vat_rate(self.app.company)),
                 "exchange_rate": float(self.app.company.get("exchange_rate", DEFAULT_EXCHANGE_RATE) or DEFAULT_EXCHANGE_RATE),
                 **self.app.invoice_actor_payload(),
             }
