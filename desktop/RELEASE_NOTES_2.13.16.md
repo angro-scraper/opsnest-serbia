@@ -1,4 +1,4 @@
-# OpsNest 2.13.16 — kandidat za objavu
+# OpsNest 2.13.16 — objava instalatera
 
 Datum: 10.09.2026. Osnova: `2bc0a2d` (2.13.15).
 
@@ -28,7 +28,7 @@ Popravke postojećeg OpsNesta, bez redizajna, novih navigacionih tokova, zamene 
 
 ## Artefakt
 
-Status: **lokalni instalater je napravljen i sadržaj proveren; nije objavljen, pokrenut niti instaliran**.
+Status: **instalater je postavljen u javni downloads i ponovo preuzet; veličina i SHA-256 potpuno se poklapaju. Prebacivanje API manifesta i linkova sajta prati ova izmena.**
 
 - Putanja: `desktop/release/OpsNest-Setup-2.13.16.exe`
 - Veličina: `114218582` bajtova.
@@ -39,7 +39,7 @@ Status: **lokalni instalater je napravljen i sadržaj proveren; nije objavljen, 
 - Novi prevodi i potrebni moduli prisutni su u upakovanom kodu. Proverena je dozvoljena lista šest javnih resursa; nema baze, `.env` ili `.ndjson` fajlova u instalateru.
 - Windows Authenticode status: **NotSigned**. Nije podešen certifikat za potpisivanje izdavača. To nije prećutano niti je SHA-256 predstavljen kao digitalni potpis.
 
-Napravljen PyInstaller-om 6.22.2 / Python 3.13.14. Build prijavljuje opciona upozorenja o zavisnostima; funkcionalna proba pokrenutog instaliranog paketa tek predstoji. Ne koristiti ovaj dokument kao potvrdu javne objave ili uspešne produkcione instalacije.
+Napravljen PyInstaller-om 6.22.2 / Python 3.13.14. Build prijavljuje opciona upozorenja o zavisnostima. Instalaciona funkcija je postavila stvarni paket u izolovani TEMP profil; upakovana aplikacija se pokrenula, bila odzivna i uredno zatvorila. Nova izolovana SQLite baza prolazi `integrity_check`. Dva dodatna testa potvrđuju očuvanje odvojenih poslovnih podataka i vraćanje prethodnog programa pri simuliranom neuspehu zamene. Produkciona instalacija, Windows registar i prečice korisnika nisu menjani; puna interaktivna instalacija i svi poslovni tokovi upakovanog programa nisu ovim potvrđeni.
 
 ## Redosled objave i provere
 
@@ -51,7 +51,7 @@ Napravljen PyInstaller-om 6.22.2 / Python 3.13.14. Build prijavljuje opciona upo
 6. Objaviti pripremljeni sadržaj `public_site`, sa postojećim `.htaccess`. Ne brisati folder `downloads`.
 7. Potvrditi da sajt, javni update API i desktop preuzimaju isti verifikovan paket. Potvrditi instalaciju/povratak na prethodnu verziju uz očuvanje poslovnih podataka.
 
-Ni jedan od ovih produkcionih koraka nije izvršen samom izradom lokalnog kandidata. Trenutna javna verzija ostaje 2.13.15.
+Objava je odobrena porukom korisnika „objavi i poslednji intaler“. Instalater je javno dostupan i potvrđen pre izmene rezervnog manifesta na 2.13.16. Kopije osam postojećih javnih HTML stranica sačuvane su lokalno pre zamene. Postojeći izgled, CSS, `.htaccess`, stariji instalateri i poslovni podaci nisu predmet ove objave. Konačna provera API-ja i stranica radi se posle deploy-a.
 
 ## Granice provere
 
