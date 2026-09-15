@@ -25,6 +25,23 @@ the workflow checks.
   `-RequireSignature` is mandatory for an official production release. See
   `CODE_SIGNING.md` for the certificate procedure.
 
+## Microsoft Store / MSIX
+
+The direct Windows installer remains the normal route for current customers.
+For Store discovery and Store-managed installation, build a separate MSIX only
+after the legal publisher has registered in Partner Center and supplied the
+exact package identity and publisher string:
+
+```powershell
+.\build_msix.ps1 -IdentityName "PARTNER_CENTER_IDENTITY_NAME" `
+  -Publisher "CN=EXACT_PARTNER_CENTER_PUBLISHER" `
+  -PublisherDisplayName "LEGAL_PUBLISHER_NAME" -RequireSignature
+```
+
+The full commercial checklist and clean-install validation procedure are in
+`MS_STORE_RELEASE.md`. Neither the Store account nor identity values belong in
+source control.
+
 ## Release order
 
 1. Merge reviewed Desktop and cloud changes.
