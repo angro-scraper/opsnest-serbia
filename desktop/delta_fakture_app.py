@@ -1609,7 +1609,7 @@ OPSNEST_WEBSITE_URL = "https://opsnestone.com"
 OPSNEST_CLOUD_API_URL = "https://api.opsnestone.com"
 OPSNEST_PRICING_URL = f"{OPSNEST_WEBSITE_URL}/pricing"
 OPSNEST_PAYPAL_CANCELLATION_URL = "https://www.paypal.com/myaccount/autopay/"
-OPSNEST_APP_VERSION = "2.13.17"
+OPSNEST_APP_VERSION = "2.13.18"
 
 
 def normalize_ui_language(value: Any) -> str:
@@ -14191,8 +14191,11 @@ class InvoiceEditor(tk.Toplevel):
             self.advance_lines_notice.pack(fill="x", pady=(0, 8), before=self.lines_tree)
             return
         self.advance_lines_notice.pack_forget()
-        self.lines_quick_frame.pack(fill="x", pady=(0, 8), before=self.lines_toolbar)
+        # Both controls are unpacked in advance mode. Restore the toolbar
+        # first: Tk requires the target of `before` to already be packed.
+        # Otherwise switching back aborts before rows and totals refresh.
         self.lines_toolbar.pack(fill="x", pady=(0, 6), before=self.lines_tree)
+        self.lines_quick_frame.pack(fill="x", pady=(0, 8), before=self.lines_toolbar)
 
     def _ensure_regular_invoice_lines(self) -> bool:
         if self._selected_invoice_kind() != "advance":
