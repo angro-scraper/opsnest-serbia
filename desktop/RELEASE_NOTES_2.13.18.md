@@ -19,4 +19,10 @@ Pri promeni avansnog računa u standardni ili završni račun, Tk forma je poku�
 
 ## Status objave
 
-Kandidat za objavu. Javni update manifest ostaje na prethodnoj verziji dok novi instalater ne bude postavljen i javno preuzet sa istim SHA-256.
+- Instalater je postavljen na `https://opsnestone.com/downloads/OpsNest-Setup-2.13.18.exe` i ponovo preuzet sa javnog sajta; veličina i SHA-256 identični su lokalnom instalateru.
+- Veličina: `114780896` bajtova.
+- SHA-256: `2b81fa3b77b5fc110e46ebfc2578ad606c30dfccf50d5d3baaa0cf9d8888241b`.
+- Proveren sadržaj instalatera: uključena ispravljena aplikacija 2.13.18, bez poslovne baze i privatnog šablona. Četiri Tk testa prolaze i nad metodom iz ugrađenog EXE-a.
+- CI provera izvornog koda `1535e2d` uspešna je na Windows-u i Ubuntu-u (run `34944791875`).
+- Javni manifest se prebacuje na ovaj prethodno provereni fajl. Instalater nema Authenticode potpis izdavača; aplikacija pre instalacije proverava SHA-256.
+- Otvorena korisnikova aplikacija nije zatvarana niti automatski ažurirana; instalaciju korisnik pokreće nakon čuvanja rada.
